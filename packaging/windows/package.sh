@@ -78,7 +78,7 @@ if [[ -d tools/windows ]]; then
     cp -r tools/windows/. "$dest/tools/windows/"
 fi
 cp run.py LICENSE README.md packaging/windows/README-Windows.txt "$dest/"
-for note in DLSS_BUILD.md PR_STACK_INTEGRATION.md; do
+for note in DLSS_BUILD.md PR_STACK_INTEGRATION.md CACHE_OPTIMIZATION.md; do
     if [[ -f docs/$note ]]; then mkdir -p "$dest/docs" && cp "docs/$note" "$dest/docs/"; fi
 done
 if [[ -f docs/FG_REFLEX.md ]]; then

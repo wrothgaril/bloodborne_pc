@@ -62,7 +62,8 @@ static inline unsigned bb_respawn_find(const unsigned char *image, size_t size, 
     unsigned found = 0;
     if (end > size) end = size;
     while (begin + BB_RESPAWN_SIZE <= end) {
-        const unsigned char *hit = memchr(image + begin, bb_respawn_head[0], end - begin - BB_RESPAWN_SIZE + 1);
+        const unsigned char *hit = (const unsigned char *)memchr(
+            image + begin, bb_respawn_head[0], end - begin - BB_RESPAWN_SIZE + 1);
         if (!hit) break;
         const size_t offset = (size_t)(hit - image);
         const int match = bb_respawn_match(image, size, offset);

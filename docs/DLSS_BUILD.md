@@ -6,6 +6,10 @@ The current source build is based on Windows v1.9.1 and integrates, in order:
 - #81: optional neural rendering with shared settings and up to four model passes.
 - #71: Windows HDR-display black-level correction and a preferred 10-bit swapchain.
 
+It also integrates shader cache/GPU optimization PRs #78, #92 and #84; #63's
+equivalent eviction policy was already present. Settings, implementation plan
+and validation are in [CACHE_OPTIMIZATION.md](CACHE_OPTIMIZATION.md).
+
 The complete renderer and launcher must be rebuilt together. The local DLSS
 bridge uses ABI **3**, distinguishing PR #69's table from the incompatible ABI 2
 in the stock v1.9.1 release. Do not copy this bridge into an official package.

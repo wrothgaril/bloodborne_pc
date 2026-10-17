@@ -147,6 +147,8 @@ Crashes on AMD RDNA2 cards, slow FSR 4 and online errors are collected in
 The current custom build integrates PRs #69, #81 and #71 on Windows v1.9.1:
 paced frame generation and Reflex, optional neural rendering, and the Windows
 HDR-display black-level correction. See [integration notes](docs/PR_STACK_INTEGRATION.md).
+Shader cache and GPU optimization PRs #78, #92 and #84 are also integrated;
+see [cache controls and validation](docs/CACHE_OPTIMIZATION.md).
 
 For the custom **DLSS 4.5** package, native PowerShell bridge build, and the current
 DLSS 5 SDK limitation, see [docs/DLSS_BUILD.md](docs/DLSS_BUILD.md).

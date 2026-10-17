@@ -233,6 +233,7 @@ extern "C" void bbgpu_flush_cache(void) {
     }
     const auto start = std::chrono::steady_clock::now();
     const bool done = cache.Flush(std::chrono::seconds(2));
+    cache.ReportStatistics();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - start)
                         .count();

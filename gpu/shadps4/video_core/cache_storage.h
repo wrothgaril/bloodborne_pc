@@ -14,6 +14,10 @@
 
 namespace Storage {
 
+struct CacheStatistics {
+    u64 hits{}, misses{}, read_bytes{}, written_bytes{};
+};
+
 enum class BlobType : u32 {
     ShaderMeta,
     ShaderBinary,
@@ -28,6 +32,10 @@ public:
     }
 
     void Open();
+    // Explicit root/serial also supports isolated cache verification without a guest process.
+    void Open(const std::filesystem::path& root, std::string_view serial);
+    [[nodiscard]] CacheStatistics Statistics() const;
+    void ReportStatistics() const;
     void Close();
     /// bbport: waits until the queued writes are on disk, for exits that skip `Close()`.
     /// False when `timeout` passed first.
