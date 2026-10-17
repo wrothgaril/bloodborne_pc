@@ -9,9 +9,11 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bbport_dlss_bridge.h" // Vulkan first: the NGX headers expect its types
@@ -224,19 +226,41 @@ void ReleaseFeature() {
     }
 }
 
+unsigned RenderPreset(const BbDlssFeature& desc) {
+    // Keep ABI 1 so this bridge can also upgrade existing Windows releases.
+    // NVIDIA's L/M presets use the DLSS 4.5 second-generation transformer.
+    if (const char* value = std::getenv("BB_DLSS_PRESET"); value && value[0]) {
+        const std::string_view preset{value};
+        if (preset == "default" || preset == "0")
+            return NVSDK_NGX_DLSS_Hint_Render_Preset_Default;
+        if (preset == "K" || preset == "k")
+            return NVSDK_NGX_DLSS_Hint_Render_Preset_K;
+        if (preset == "L" || preset == "l")
+            return NVSDK_NGX_DLSS_Hint_Render_Preset_L;
+        if (preset == "M" || preset == "m")
+            return NVSDK_NGX_DLSS_Hint_Render_Preset_M;
+        Log(1, "Unknown BB_DLSS_PRESET '%s'; using the build's DLSS 4.5 preset", value);
+    }
+    if (desc.preset)
+        return desc.preset;
+    return desc.quality == 4 ? NVSDK_NGX_DLSS_Hint_Render_Preset_L
+                             : NVSDK_NGX_DLSS_Hint_Render_Preset_M;
+}
+
 int32_t CreateFeature(VkCommandBuffer command, const BbDlssFeature* desc) {
     if (!state.initialized || !state.capabilities || !desc)
         return 0;
     ReleaseFeature();
     if (!Check("Parameter allocation", NVSDK_NGX_VULKAN_AllocateParameters(&state.parameters)))
         return 0;
+    const unsigned preset = RenderPreset(*desc);
     for (const char* key : {NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA,
                             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
                             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced,
                             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
                             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance,
                             NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraQuality})
-        NVSDK_NGX_Parameter_SetUI(state.parameters, key, desc->preset);
+        NVSDK_NGX_Parameter_SetUI(state.parameters, key, preset);
     static constexpr std::array qualities{
         NVSDK_NGX_PerfQuality_Value_DLAA, NVSDK_NGX_PerfQuality_Value_MaxQuality,
         NVSDK_NGX_PerfQuality_Value_Balanced, NVSDK_NGX_PerfQuality_Value_MaxPerf,
@@ -260,7 +284,7 @@ int32_t CreateFeature(VkCommandBuffer command, const BbDlssFeature* desc) {
     }
     state.feature_desc = *desc;
     Log(0, "DLSS %ux%u -> %ux%u, quality %d, preset %u%s", desc->input_width, desc->input_height,
-        desc->output_width, desc->output_height, desc->quality, desc->preset,
+        desc->output_width, desc->output_height, desc->quality, preset,
         desc->hdr ? ", HDR input" : "");
     return 1;
 }

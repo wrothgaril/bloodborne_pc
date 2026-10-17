@@ -35,7 +35,7 @@ typedef struct BbDlssFeature {
     uint32_t output_height;
     int32_t quality; // 0 DLAA, 1 Quality, 2 Balanced, 3 Performance, 4 Ultra Performance
     int32_t depth_inverted;
-    uint32_t preset; // NVSDK_NGX_DLSS_Hint_Render_Preset value, 0 = driver default
+    uint32_t preset; // NGX render preset; 0 = this build's L/M default (BB_DLSS_PRESET overrides)
     int32_t hdr;     // 1: linear HDR colour with automatic exposure, 0: tonemapped colour
 } BbDlssFeature;
 
