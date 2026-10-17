@@ -144,6 +144,10 @@ Crashes on AMD RDNA2 cards, slow FSR 4 and online errors are collected in
 
 ## Building from source
 
+The current custom build integrates PRs #69, #81 and #71 on Windows v1.9.1:
+paced frame generation and Reflex, optional neural rendering, and the Windows
+HDR-display black-level correction. See [integration notes](docs/PR_STACK_INTEGRATION.md).
+
 For the custom **DLSS 4.5** package, native PowerShell bridge build, and the current
 DLSS 5 SDK limitation, see [docs/DLSS_BUILD.md](docs/DLSS_BUILD.md).
 The verified SDK search and remaining DLSS 5 dependency are recorded in

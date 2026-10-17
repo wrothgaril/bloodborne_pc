@@ -7,7 +7,7 @@
 // Neural Rendering off when it is absent. Nothing here touches the NVIDIA runtime until the caller
 // calls Initialize, so "NR off" costs one LoadLibrary and no device state.
 //
-// This is ABI 1 of a second, separate bridge. bbport_dlss.dll keeps ABI 2 and is untouched: the two
+// This is ABI 1 of a separate bridge. The local bbport_dlss.dll uses ABI 3: the two
 // features have different lifetimes (the model owns internal history the upscaler does not) and
 // different failure modes, and sharing one ABI would make one feature's bug both features'.
 //

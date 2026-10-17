@@ -1,52 +1,72 @@
-# DLSS 4.5 Windows build
+# DLSS build with PRs #69, #81 and #71
 
-This custom package uses the Windows v1.8.2 release's launcher and game renderer,
-a rebuilt ABI 1 Vulkan DLSS bridge, and NVIDIA's signed release Super Resolution
-runtime 310.9.16.0. The complete renderer was not rebuilt: the downloaded source
-archive omits its dependency submodules and the CLANG64 dependencies are absent.
-No game data is included.
+The current source build is based on Windows v1.9.1 and integrates, in order:
 
-Start `Bloodborne.exe`, select your own game folder, and press PLAY. The supplied
-`bbport.ini` selects DLSS initially; the launcher still calls this option
-**DLSS (NVIDIA GeForce RTX)**. Native AA, Quality, Balanced and Performance request
-the DLSS 4.5 second-generation transformer preset M; Ultra Performance requests L.
-NVIDIA's driver or NVIDIA App overrides may affect the model actually selected.
+- #69: paced DLSS/FSR frame generation, Reflex, reconstruction and custom-output fixes.
+- #81: optional neural rendering with shared settings and up to four model passes.
+- #71: Windows HDR-display black-level correction and a preferred 10-bit swapchain.
 
-Preset M can cost more GPU time, especially on older RTX cards. For the runtime's
-recommended presets, add `BB_DLSS_PRESET=default` to the launcher's **Advanced →
-Extra variables**. `BB_DLSS_PRESET=K`, `L`, or `M` explicitly requests
-that model instead. With default selection NVIDIA currently recommends K for
-DLAA/Quality/Balanced, M for Performance, and L for Ultra Performance. Check
-`user/last_run.log` for the requested numeric preset: K=11, L=12, M=13, default=0.
+The complete renderer and launcher must be rebuilt together. The local DLSS
+bridge uses ABI **3**, distinguishing PR #69's table from the incompatible ABI 2
+in the stock v1.9.1 release. Do not copy this bridge into an official package.
+The separate neural-rendering adapter uses its own ABI 1.
 
-DLSS Frame Generation, Multi Frame Generation, Ray Reconstruction, and DLSS 5
-Neural Rendering are not implemented in this bridge. The inspected Streamline
-2.14.16 SDK defines `kFeatureDLSS_NR`, but provides no `sl_dlss_nr.h`,
-`sl.dlss_nr.dll`, or `nvngx_dlssnr.dll`. A feature ID alone cannot implement DLSS 5;
-its matching SDK, runtime and integration documentation are still needed.
+The new source package is `dist/bbport-windows.zip`, with its playable folder at
+`dist/bbport-windows/`. The older `Bloodborne-Windows-DLSS-4.5.zip` and
+`Bloodborne-Windows-1.9.1-DLSS-4.5.zip` remain earlier builds without this PR stack.
 
-## Rebuilding the bridge
+Start `Bloodborne.exe` and choose the game folder. Select DLSS under Graphics.
+Native AA, Quality, Balanced and Performance request DLSS 4.5 preset M; Ultra
+Performance requests L. NVIDIA driver or App overrides may affect model selection.
+In Advanced, Extra variables accepts `BB_DLSS_PRESET=default`, `K`, `L`, or `M`.
+The default option delegates selection to NVIDIA; K can reduce model cost on
+older RTX GPUs. These SR presets are separate from the NR model presets.
 
-Install Visual Studio C++ x64 build tools (2022 or 2026) and the Vulkan SDK.
-Obtain the NVIDIA DLSS SDK from <https://github.com/NVIDIA/DLSS>, including its
-`include`, `lib/Windows_x86_64/x64`, and `lib/Windows_x86_64/rel` folders and license.
-This build used commit `9981c6350dc58c0ce21f024fd65e31e851c31689`.
+Frame generation and Reflex controls now follow PR #69: backend, factor and
+Reflex changes take effect after restart. Frame generation and NR default to
+Off. See [FG_REFLEX.md](FG_REFLEX.md) for settings and diagnostics.
 
-From the repository root in PowerShell:
+Neural rendering requires a separately supplied compatible `nvngx_dlssnr.dll`.
+It is **not included** in the package. Put it beside `bin/bb-probe.exe`, or set
+`BB_NR_RUNTIME` to its directory. Missing components leave NR unavailable and
+preserve the original scene. See [NEURAL_RENDERING.md](NEURAL_RENDERING.md).
+This is the community feature-18 integration from PR #81, not an official public
+DLSS 5 SDK integration.
 
-```powershell
-./packaging/windows/build_dlss.ps1 -SdkRoot ./out/deps/DLSS -SmokeTest
-./packaging/windows/package_dlss.ps1 -BaseArchive C:/path/to/Bloodborne-Windows.zip
+PR #71 follows the window's Windows HDR-display state. `BB_HDR_GAMMA=0` disables
+its gamma correction and preferred 10-bit SDR swapchain.
+
+## Rebuild
+
+Use MSYS2 CLANG64 and the dependencies in `packaging/windows/README.md`:
+
+```bash
+git submodule update --init --recursive
+bash build.sh
 ```
 
-The first command writes `out/bbport_dlss.dll` and `out/nvngx_dlss.dll`.
-`-SmokeTest` requires a supported RTX GPU and NVIDIA driver. It verifies the ABI,
-Vulkan extension discovery, NGX initialization, actual GPU feature creation in
-all five quality modes, release, shutdown and reinitialization. It does not
-evaluate image reconstruction or verify in-game visual quality or performance.
-Omit that switch for compilation on a machine without an RTX GPU.
+`MSYS2_ROOT` can point to a relocated toolchain. This workspace's toolchain is in
+`out/msys2/clang64`; use `MSYS2_ROOT="$PWD/out/msys2"` in an MSYS2 shell.
+The FSR vendor patches stay as working-tree changes in the submodule and are
+reapplied by `build.sh` when needed.
 
-The second command creates a separate playable folder and ZIP in `dist`, with a
-runtime version and SHA-256 manifest. It leaves the base ZIP and existing saves
-alone. The base must be the official Windows v1.8.2 binary release archive.
+Build the DLSS adapter with Visual Studio C++ and a current NVIDIA DLSS SDK:
 
+```powershell
+./packaging/windows/build_dlss.ps1 -SdkRoot C:/path/to/DLSS-310.9.16 -SmokeTest
+```
+
+The NR adapter builds independently with CMake from `gpu/nr_bridge`; set
+`DLSS_SDK_ROOT` and `VULKAN_INCLUDE`, build the Release configuration, and copy
+`bbport_nr_nvngx.dll` into `out/`. `BBPORT_NR_BUILD_SMOKE=ON` builds the optional
+standalone model test, which needs the separately supplied NR runtime.
+
+Finally package the rebuilt renderer and launcher:
+
+```powershell
+./packaging/windows/package_dlss.ps1 -WindowsPython C:/path/to/python.exe
+```
+
+The former `-BaseArchive` overlay mode is rejected because it would pair an
+incompatible renderer and adapter. No game data is included. Local integration
+and validation details are in [PR_STACK_INTEGRATION.md](PR_STACK_INTEGRATION.md).

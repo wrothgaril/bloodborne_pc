@@ -274,7 +274,9 @@ void Swapchain::SetSurfaceProperties() {
     }
 
     // Select number of images in swap chain, we prefer one buffer in the background to work on
-    image_count = capabilities.minImageCount + 1;
+    // (bbport: two with frame generation, which presents several images per game frame).
+    image_count = capabilities.minImageCount +
+                  (BbSettings::Get().startup_frame_generation >= 2 ? 2 : 1);
     if (capabilities.maxImageCount > 0) {
         image_count = std::min(image_count, capabilities.maxImageCount);
     }

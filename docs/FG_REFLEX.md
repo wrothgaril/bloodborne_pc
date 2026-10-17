@@ -132,6 +132,10 @@ interchangeable.
 
 ## Validation and package
 
+The following measurements describe the contributor's original candidate.
+For this Windows 1.9.1 integration, the paired DLSS adapter uses ABI 3 and local
+validation is recorded in [PR stack integration](PR_STACK_INTEGRATION.md).
+
 Compilation, 70 Python tests, ten native CPU suites on Windows, two shader/SPIR-V checks
 and the ABI-2 adapter table pass. Hardware validation distinguishes source cadence
 from displayed cadence, and CPU pad-sample-to-present diagnostics from physical
@@ -139,4 +143,4 @@ input latency. Latest-candidate gameplay, changing-load, memory and recovery
 results are tracked in [GPU validation](GPU_VALIDATION.md). A runtime change
 requires new hardware evidence before it is described as validated.
 
-The package includes the paired ABI-2 `bbport_dlss.dll`, `nvngx_dlss.dll`, `nvngx_dlssg.dll`, existing FSR assets, diagnostic tools and license notices. NVIDIA SDK terms, original MIT bridge notices and GPL-3.0 notices for adapted bbhost code are retained.
+The package includes the paired ABI-3 `bbport_dlss.dll`, `nvngx_dlss.dll`, `nvngx_dlssg.dll`, existing FSR assets, diagnostic tools and license notices. NVIDIA SDK terms, original MIT bridge notices and GPL-3.0 notices for adapted bbhost code are retained.

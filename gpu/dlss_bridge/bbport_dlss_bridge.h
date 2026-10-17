@@ -14,7 +14,8 @@
 extern "C" {
 #endif
 
-#define BBPORT_DLSS_BRIDGE_ABI 2
+// This FG table differs from upstream 1.9's ABI 2. Reject that layout explicitly.
+#define BBPORT_DLSS_BRIDGE_ABI 3
 
 typedef void (*BbDlssLogFn)(int warning, const char* message);
 
@@ -97,7 +98,7 @@ typedef struct BbDlssApi {
     void (*ReleaseFeature)(void);
     void (*Shutdown)(void);
 
-    // ABI 2: Frame Generation extensions and evaluation
+    // ABI 3: Frame Generation extensions and evaluation (PR #69 layout).
     int32_t (*FgAvailable)(void);
     uint32_t (*FgMaxGenerated)(void);
     int32_t (*FgExtensions)(VkInstance instance, VkPhysicalDevice physical, uint32_t* count,

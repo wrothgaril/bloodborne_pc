@@ -474,6 +474,11 @@ if (WIN32)
     add_dependencies(dlss-bridge-reject-test dlss-unknown-bridge-test)
     file(GENERATE OUTPUT "${BB_DLSS_REJECT_DIR}/nvngx_dlss.dll" CONTENT "test presence sentinel")
     add_test(NAME dlss-bridge-reject-test COMMAND dlss-bridge-reject-test)
+    set_tests_properties(dlss-bridge-reject-test PROPERTIES
+        ENVIRONMENT "BB_TEST_STOCK_DLSS_ABI=0")
+    add_test(NAME dlss-stock-bridge-reject-test COMMAND dlss-bridge-reject-test)
+    set_tests_properties(dlss-stock-bridge-reject-test PROPERTIES
+        ENVIRONMENT "BB_TEST_STOCK_DLSS_ABI=1")
 endif()
 
 # Optional neural-rendering controls, without GPU/runtime initialization.

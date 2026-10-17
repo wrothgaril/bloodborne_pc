@@ -357,7 +357,7 @@ int32_t Evaluate(VkCommandBuffer command, const BbDlssEvaluate* evaluate) {
 }
 
 // -----------------------------------------------------------------------------
-// Frame Generation (ABI 2)
+// Frame Generation (local ABI 3, PR #69 table)
 // -----------------------------------------------------------------------------
 
 int32_t FgAvailable() {

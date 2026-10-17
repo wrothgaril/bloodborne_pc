@@ -4,9 +4,10 @@ Optional DLSS Neural Rendering is configured in **Graphics → Neural rendering*
 below Upscaling, and in the in-game Insert menu. It is separate from super
 resolution and frame generation. It is off by default.
 
-This branch builds on the Windows 1.8.2 integration with paced DLSS/FSR frame
-generation and Reflex. Neural rendering has its own adapter and interface;
-`bbport_dlss.dll` and its ABI-2 interface are unchanged.
+This integration builds on Windows 1.9.1 with paced DLSS/FSR frame generation
+and Reflex. Neural rendering has its own ABI-1 adapter and interface. The
+matching local `bbport_dlss.dll` uses ABI 3; see
+[PR stack integration](PR_STACK_INTEGRATION.md) for compatibility and local tests.
 
 ## Runtime
 

@@ -1,8 +1,13 @@
 # DLSS 5 SDK investigation
 
+Historical search of NVIDIA's official SDK channels. The current tree also
+integrates PR #81's community neural-rendering adapter, after PR #69, as described
+in [PR_STACK_INTEGRATION.md](PR_STACK_INTEGRATION.md). It still requires a separate
+model DLL; this does not change the official SDK availability findings below.
+
 Checked 17 October 2026. No complete, publicly downloadable NVIDIA DLSS 5 Neural
-Rendering SDK was located in the channels below. No DLSS 5 implementation was
-added, and the tested DLSS 4.5 package remains available in `dist`.
+Rendering SDK was located in the channels below. At the time of this search no
+DLSS 5 implementation was added. The earlier DLSS 4.5 package remains in `dist`.
 
 ## SDK identified in NVIDIA's sample
 

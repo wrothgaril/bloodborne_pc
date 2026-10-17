@@ -12,7 +12,11 @@ extern "C" __declspec(dllexport) const void* BbDlssGetApi() {
             nullptr, page * 2, MEM_RESERVE, PAGE_NOACCESS));
         if (!memory || !VirtualAlloc(memory, page, MEM_COMMIT, PAGE_READWRITE)) return nullptr;
         auto* abi = reinterpret_cast<std::uint32_t*>(memory + page - sizeof(std::uint32_t));
-        *abi = 0xffffffffu;
+        char stock[2]{};
+        const bool stock_layout =
+            GetEnvironmentVariableA("BB_TEST_STOCK_DLSS_ABI", stock, sizeof(stock)) == 1 &&
+            stock[0] == '1';
+        *abi = stock_layout ? 2u : 0xffffffffu;
         return abi;
     }();
     return table;

@@ -78,6 +78,9 @@ if [[ -d tools/windows ]]; then
     cp -r tools/windows/. "$dest/tools/windows/"
 fi
 cp run.py LICENSE README.md packaging/windows/README-Windows.txt "$dest/"
+for note in DLSS_BUILD.md PR_STACK_INTEGRATION.md; do
+    if [[ -f docs/$note ]]; then mkdir -p "$dest/docs" && cp "docs/$note" "$dest/docs/"; fi
+done
 if [[ -f docs/FG_REFLEX.md ]]; then
     mkdir -p "$dest/docs" && cp docs/FG_REFLEX.md "$dest/docs/"
     if [[ -f docs/GPU_VALIDATION.md ]]; then cp docs/GPU_VALIDATION.md "$dest/docs/"; fi
@@ -126,7 +129,7 @@ cp launcher/assets/fonts/Inter-LICENSE.txt "$dest/licenses/Inter-OFL.txt"
 # Where the online code comes from (shadPS4 0.20, Awaken's port, bbhost's protocol).
 cp gpu/bbnet/SHADNET-PORT.md "$dest/licenses/online-code-NOTICE.md"
 for package in protobuf abseil-cpp openssl miniupnpc zlib; do
-    license=/clang64/share/licenses/$package/LICENSE
+    license=$msys2_root/clang64/share/licenses/$package/LICENSE
     if [[ -f $license ]]; then cp "$license" "$dest/licenses/$package-LICENSE.txt"; fi
 done
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
