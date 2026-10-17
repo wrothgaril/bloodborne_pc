@@ -146,6 +146,8 @@ Crashes on AMD RDNA2 cards, slow FSR 4 and online errors are collected in
 
 For the custom **DLSS 4.5** package, native PowerShell bridge build, and the current
 DLSS 5 SDK limitation, see [docs/DLSS_BUILD.md](docs/DLSS_BUILD.md).
+The verified SDK search and remaining DLSS 5 dependency are recorded in
+[docs/DLSS5_SDK_STATUS.md](docs/DLSS5_SDK_STATUS.md).
 
 See [packaging/windows/README.md](packaging/windows/README.md): MSYS2 CLANG64, `bash build.sh`,
 then `bash packaging/windows/package.sh`. DLSS is built separately with
