@@ -354,7 +354,8 @@ class PatchGroupTests(unittest.TestCase):
                                 capture_output=True, text=True, env={**os.environ, 'BB_FORCE_PATCHES': ''})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('frame rate code differs', result.stdout)
-        self.assertIn('ultrawide 5120x1440', result.stdout)
+        # This integration retains #69's centered stage and output-space UI viewports.
+        self.assertIn('scene 5120x1440', result.stdout)
         blob = (self.dir / 'patches.bin').read_bytes()
         self.assertGreater(struct.unpack_from('<Q', blob, 16)[0], 0)
 

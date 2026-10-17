@@ -569,7 +569,8 @@ static void ClampViewRange(TextureCache::ImageDesc& desc, const Image& image) {
     // In u32 throughout: the counts are u16 since 1.9 (u32 before).
     const u32 levels = std::max<u32>(image.info.resources.levels, 1u);
     const u32 layers = std::max<u32>(image.info.resources.layers, 1u);
-    if (u32(range.base.level) + range.extent.levels <= levels &&
+    if (range.extent.levels != 0 && range.extent.layers != 0 &&
+        u32(range.base.level) + range.extent.levels <= levels &&
         u32(range.base.layer) + range.extent.layers <= layers) {
         return;
     }

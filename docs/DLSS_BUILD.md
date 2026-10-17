@@ -9,6 +9,8 @@ The current source build is based on Windows v1.9.1 and integrates, in order:
 It also integrates shader cache/GPU optimization PRs #78, #92 and #84; #63's
 equivalent eviction policy was already present. Settings, implementation plan
 and validation are in [CACHE_OPTIMIZATION.md](CACHE_OPTIMIZATION.md).
+Crash, DoF, audio and modified-executable fixes from #87, #75, #80 and #90
+are described in [STABILITY_PRS.md](STABILITY_PRS.md).
 
 The complete renderer and launcher must be rebuilt together. The local DLSS
 bridge uses ABI **3**, distinguishing PR #69's table from the incompatible ABI 2

@@ -344,6 +344,13 @@ def eboot_matches_patches(elf_path,app_version='01.09'):
     return matching_groups(elf_path,app_version)==set(PATCH_GROUPS)
 
 
+def frame_heaps_compatible(read):
+    """The two MOV EDX heap sizes from #87, checked independently of FPS/resolution groups."""
+    return all(read(at-1,at)==b'\xba' and
+               read(at,at+4) in (b'\x00\x00\x04\x00',b'\x00\x00\x10\x00')
+               for at in (0x2195c0a,0x2195c47))
+
+
 def encode(line):
     kind,value=line.get('Type'),line.get('Value')
     if kind=='bytes': return bytes.fromhex(value.replace(' ',''))
@@ -492,8 +499,13 @@ def main():
               f'{group_list(set(PATCH_GROUPS)-groups)} code differs; only the {group_list(groups)} patches apply')
     fps_names=FPS_PRESETS[a.fps] if 'fps' in groups else []
     names=list(fps_names)
+    elf=(a.out/'eboot.elf').read_bytes()
+    if force or frame_heaps_compatible(lambda start,end: eboot_bytes(elf,start,end)):
+        names+=FIXES
+    else:
+        print('Patches: frame heap instructions differ; Larger Frame Heaps skipped')
     if whole:  # other patches' code is not fingerprinted
-        names+=FIXES+[n.strip() for n in a.extra.split(';') if n.strip()]
+        names+=[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names and GROUP_OF.get(n) in groups]
     try:
         validate_patch_requirements(names,a.game_dir)
