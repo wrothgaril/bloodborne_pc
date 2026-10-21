@@ -348,7 +348,9 @@ static ABI int32_t thread_get_prio(GuestThread *t,int *prio) {
 }
 static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     if (!find_thread(t)) return ERR(3);
-    t->attr.prio=prio; return 0;
+    t->attr.prio=prio;
+    if (t==runtime_thread_current()) set_host_priority(prio); /* a mixer raising itself later */
+    return 0;
 }
 static ABI int32_t thread_set_affinity(GuestThread *t,uint64_t mask) {
     if (!find_thread(t)) return ERR(3);
