@@ -157,7 +157,8 @@ class SetupMixin:
                 'effect_ssr': (_(*flags['effect_ssr']), 'flag'),
                 'model_lod': (_('Model detail (LOD)'), L.LODS), 'object_motion': (_('Object motion vectors'), 'flag'),
                 'sharpen': (_('Sharpening (RCAS)'), 'flag'), 'sharpness': (_('Sharpness'), 'number'),
-                'frame_gen': (_('Frame generation'), L.FRAME_GENERATION)}
+                'frame_generation': (_('Frame generation'), L.FG_MODES_DLSS),
+                'fg_backend': (_('Generation backend', 'Бэкенд генерации'), L.FG_BACKENDS)}
 
     def show_value(self, key, value):
         _title, kind = self.setting_names()[key]
@@ -1856,9 +1857,9 @@ class SetupMixin:
             r = hardware.assess(self.rating.gpu, self.cpu, self.ram)  # English texts
             lines.append(f'Rating: {r.tier_label}; ' + ', '.join(f'{res} {label}' for res, _l, label, _s in r.rows))
         get = lambda key, store: self.var(key, store).get()
-        lines.append('Settings: output {} | upscaler {} preset {} | fps {} | frame gen {} | fullscreen {}'.format(
+        lines.append('Settings: output {} | upscaler {} preset {} | fps {} | frame gen {} {} | fullscreen {}'.format(
             get('output_res', 'ini'), get('upscaler', 'ini'), get('preset', 'ini'), get('fps_mode', 'app'),
-            get('frame_gen', 'ini'), get('fullscreen', 'app')))
+            get('fg_backend', 'ini'), get('frame_generation', 'ini'), get('fullscreen', 'app')))
         info = L.game_info(get('game_dir', 'app'))
         lines.append(f'Game: {info[0]} {info[1]}' if info else 'Game: folder not set')
         return '\n'.join(lines)
@@ -2682,5 +2683,7 @@ class SetupGuide:
             return
         _res, _output, entries = app.recommended(self.choice)
         if self.frame_gen.get() and r.frame_gen:
-            entries = [e for e in entries if e[1] != 'frame_gen'] + [('ini', 'frame_gen', r.frame_gen, '')]
+            backend = 'dlss' if r.frame_gen == 'dlss' else 'fsr'  # the rating's 'dlss' or 'fsr3'
+            entries = [e for e in entries if e[1] not in ('frame_generation', 'fg_backend')] + \
+                [('ini', 'fg_backend', backend, ''), ('ini', 'frame_generation', '2x', '')]
         app.apply_profile(entries, remember_undo=not self.first)  # repeated: Undo on Picture & performance

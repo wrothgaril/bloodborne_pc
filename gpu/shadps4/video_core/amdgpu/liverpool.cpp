@@ -10,6 +10,7 @@
 #include "bbport_copy.h"
 #include "bbport_toggles.h"
 #include <cstdio>
+#include <cstring>
 #include <boost/preprocessor/stringize.hpp>
 
 #include "common/assert.h"
@@ -27,6 +28,9 @@
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
+#include "video_core/renderer_vulkan/vk_occlusion.h"
+#include "bbport_threads.h"
 
 namespace AmdGpu {
 
@@ -110,6 +114,7 @@ void Liverpool::ProcessCommands() {
 
 void Liverpool::Process(std::stop_token stoken) {
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
+    BbThreads::RaiseRenderPriority();
 #ifndef _WIN32
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0) {
         BbStats::gpu_thread_clock.store(static_cast<int>(clock));
@@ -184,17 +189,24 @@ void Liverpool::Process(std::stop_token stoken) {
         // heap free list after minutes of play).
         // The same holds when sceGnmSubmitDone finds the GPU idle and does not block at all:
         // decoded (num_submits 0) is not done until then (work_retired).
+        BbStats::submit_done_calls.fetch_add(1, std::memory_order_relaxed);
         if (rasterizer) {
-            rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonSubmissionEnd);
-            rasterizer->WaitDeferredSignals();
-        }
-        {
+            rasterizer->FinishSubmissionIdle([this] {
+                {
+                    std::scoped_lock lk{submit_mutex};
+                    if (num_submits == 0) {
+                        work_retired = true;
+                    }
+                }
+                Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
+            });
+        } else {
             std::scoped_lock lk{submit_mutex};
             if (num_submits == 0) {
                 work_retired = true;
             }
+            Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
         }
-        Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
     }
 }
 
@@ -237,6 +249,7 @@ bool PipelinedOpcode(PM4ItOpcode opcode) {
     case PM4ItOpcode::DispatchIndirect:
     case PM4ItOpcode::WriteData:     // run in order on the recording thread (RunInOrder)
     case PM4ItOpcode::DmaData:
+    case PM4ItOpcode::SetPredication:
         return true;
     default:
         return false;
@@ -287,6 +300,19 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
 void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto* dma_data = reinterpret_cast<const PM4DmaData*>(data);
     ASSERT(dma_data->command.das == 0);
+    static const int dma_waits = [] {
+        const char* env = std::getenv("BB_DMA_WAITS");
+        if (!env || !env[0] || env[0] == '0') {
+            return 0;
+        }
+        return std::strcmp(env, "all") == 0 ? 2 : 1;
+    }();
+    const bool cpu_write = dma_data->src_sel == DmaDataSrc::Data &&
+                           (dma_data->dst_sel == DmaDataDst::Memory ||
+                            dma_data->dst_sel == DmaDataDst::MemoryUsingL2);
+    if (dma_waits == 2 || (dma_waits == 1 && cpu_write)) {
+        rasterizer.WaitDeferredSignals();
+    }
     if (dma_data->src_sel == DmaDataSrc::Data && dma_data->dst_sel == DmaDataDst::Gds) {
         rasterizer.FillBuffer(dma_data->dst_addr_lo, dma_data->NumBytes(),
                                dma_data->data, true);
@@ -334,6 +360,18 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
                      (header->type3.count.Value() - 2) * sizeof(u32), BbWriteLog::WriteData);
     std::memcpy(write_data->Address<u64*>(), write_data->data,
                 (header->type3.count.Value() - 2) * sizeof(u32));
+}
+
+void RunOcclusionDump(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    if (auto* occlusion = rasterizer.GetOcclusion()) {
+        occlusion->Dump(*reinterpret_cast<const Vulkan::Occlusion::DumpTask*>(data));
+    }
+}
+
+void RunSetPredication(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    if (auto* occlusion = rasterizer.GetOcclusion()) {
+        occlusion->SetPredication(*reinterpret_cast<const Vulkan::Occlusion::PredicationTask*>(data));
+    }
 }
 
 void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
@@ -708,7 +746,7 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
 } // namespace
 
 Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb,
-                                           u64 seq,
+                                           u64 seq, u64 frame_id,
                                            std::shared_ptr<const BbCommandBufferCopy> command_copy) {
     // The coroutine parameter keeps the copied spans alive across every yield.
     (void)command_copy;
@@ -716,6 +754,18 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     // Top-level buffers enqueued for the draw preparation workers (nested IBs are not).
     Vulkan::DrawPreparation* draw_prep =
         seq != NoSeq && rasterizer ? &rasterizer->GetDrawPreparation() : nullptr;
+    // bbport: adopt the guest simulation identity captured at submit acceptance. This runs on
+    // the GPU command thread at the start of the top-level submission, before its first
+    // command buffer is allocated. Rasterizer::SetSubmissionFrameId drains the draw-recording
+    // thread only when the identity changes, then the scheduler flushes the previous source's
+    // still-open work under the old identity and keeps the new one for every allocation of the
+    // submission. It is deliberately outside the draw-preparation branch, but it still keys on
+    // `seq`, which SubmitGfx only assigns when the rasterizer (and therefore draw preparation)
+    // exists. That holds for the game path; a rasterizer-less run records no markers either.
+    // Nested indirect buffers inherit the enclosing top-level submission's identity.
+    if (seq != NoSeq && rasterizer) {
+        rasterizer->SetSubmissionFrameId(frame_id);
+    }
     if (draw_prep) {
         draw_prep->BeginSubmission(seq, regs, gfx_reg_checksum);
     }
@@ -922,7 +972,15 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break; // registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::SetPredication: {
-                LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION");
+                const auto* pred = reinterpret_cast<const u32*>(header);
+                Vulkan::Occlusion::PredicationTask task{};
+                task.block = (u64(pred[2] & 0xFFFF) << 32) | (pred[1] & ~0xFu);
+                task.op = (pred[2] >> 24) & 7;
+                task.draw_if_visible = ((pred[2] >> 16) & 1) == 0;
+                task.cont = (pred[2] >> 31) & 1;
+                if (rasterizer && rasterizer->GetOcclusion()) {
+                    rasterizer->RunInOrder(&RunSetPredication, &task, sizeof(task));
+                }
                 break;
             }
             case PM4ItOpcode::IndexType: {
@@ -1131,13 +1189,19 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     // registers: ApplyGraphicsRegisterPacket
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
                     if (event->event_type.Value() == EventType::PixelPipeStatDump) {
-                        static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
-                        static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
-                        u64* results = event->Address<u64*>();
-                        for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
-                            *results = pixel_counter | OcclusionCounterValidMask;
+                        if (rasterizer && rasterizer->GetOcclusion()) {
+                            const auto task = rasterizer->GetOcclusion()->MakeDump(
+                                event->Address<VAddr>(), num_counter_pairs);
+                            rasterizer->RunInOrder(&RunOcclusionDump, &task, sizeof(task));
+                        } else {
+                            static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
+                            static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
+                            u64* results = event->Address<u64*>();
+                            for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
+                                *results = pixel_counter | OcclusionCounterValidMask;
+                            }
+                            pixel_counter += OcclusionCounterStep;
                         }
-                        pixel_counter += OcclusionCounterStep;
                     }
                 }
                 break;
@@ -1270,7 +1334,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             case PM4ItOpcode::IndirectBuffer: {
                 const auto* indirect_buffer = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
                 auto task = ProcessGraphics(
-                    {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, {});
+                    {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, {}, NoSeq,
+                    frame_id);
                 // Tasks start suspended: the nested body (and its scan) runs on this resume.
                 g_dcb_depth = dcb_depth + 1;
                 RESUME_GFX(task);
@@ -1651,6 +1716,12 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
 void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     auto& queue = mapped_queues[GfxQueueId];
 
+    // bbport: capture the guest simulation identity at submit acceptance, on the guest thread.
+    // Reading it later (GPU thread / command recording) attributes the batch to whichever
+    // simulation cycle happens to be open then, which is exactly the late-global-ID mismatch
+    // that made the render markers disagree with the input/simulation markers.
+    const u64 frame_id = Vulkan::Reflex::CurrentSimFrameId();
+
     std::shared_ptr<const BbCommandBufferCopy> command_copy;
     if (EmulatorSettings.IsCopyGpuBuffers()) {
         command_copy = std::make_shared<BbCommandBufferCopy>(dcb, ccb);
@@ -1670,7 +1741,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
             seq = gfx_submit_seq++;
             draw_prep->Enqueue(seq, std::move(prep_submission));
         }
-        auto task = ProcessGraphics(dcb, ccb, seq, std::move(command_copy));
+        auto task = ProcessGraphics(dcb, ccb, seq, frame_id, std::move(command_copy));
         queue.submits.emplace(task.handle);
     }
 

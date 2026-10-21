@@ -21,6 +21,7 @@
 #include <vector>
 #include <SDL3/SDL.h>
 #include "../bbgpu.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "common/elf_info.h"
 #include "common/logging/log.h"
 #include "common/rdtsc.h"
@@ -30,6 +31,8 @@
 #include "core/signals.h"
 #include "sdl_window.h"
 #include "bloodborne_cam.h"
+#include "core/emulator_settings.h"
+#include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
 extern "C" {
@@ -221,6 +224,24 @@ static void StartProfileWriter() {
 }
 #endif
 
+extern "C" void bbgpu_flush_cache(void) {
+    const char* env = std::getenv("BB_CACHE_FLUSH_ON_EXIT");
+    static const bool enabled = !(env && env[0] == '0');
+    auto& cache = Storage::DataBase::Instance();
+    if (!enabled || !cache.IsOpened()) {
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const bool done = cache.Flush(std::chrono::seconds(2));
+    cache.ReportStatistics();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+    std::printf("Shader cache: %s at exit in %lld ms\n",
+                done ? "queued writes on disk" : "queued writes NOT finished",
+                static_cast<long long>(ms));
+}
+
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
 #ifdef BB_PGO_GENERATE
@@ -248,6 +269,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        bbgpu_flush_cache();
         std::fflush(stdout);
         std::_Exit(0);
     });
@@ -395,4 +417,20 @@ extern "C" int bbgpu_input_reload_requested(void) {
 
 extern "C" void bbgpu_mouse_camera_configure(int direct, float sensitivity, float scale_x, float scale_y, int sync) {
     Core::BloodborneCam::Instance().Configure(direct != 0, sensitivity, scale_x, scale_y, sync != 0);
+}
+
+extern "C" void bbgpu_reflex_pre_input_sample(void) {
+    Vulkan::Reflex::PreInputSample();
+}
+
+extern "C" void bbgpu_reflex_on_input_sampled(void) {
+    Vulkan::Reflex::OnInputSampled();
+}
+
+extern "C" void bbgpu_reflex_on_simulation_end(void) {
+    Vulkan::Reflex::OnSimulationEnd();
+}
+
+extern "C" uint64_t bbgpu_reflex_current_sim_frame_id(void) {
+    return Vulkan::Reflex::CurrentSimFrameId();
 }

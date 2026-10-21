@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <string>
 #include "common/types.h"
+#include "bbport_settings.h"
 
 u32 BbDisplayRefreshHz(); // bbgpu.cpp: primary display refresh rate, 60 when unknown
 
@@ -27,9 +28,18 @@ public:
     u32 GetInternalScreenHeight() { static const auto value = u32(Number("BB_INTERNAL_HEIGHT", 1080)); return value; }
     std::string GetPresentMode() { const char* v = std::getenv("BB_PRESENT_MODE"); return v ? v : "Mailbox"; }
     int GetRcasAttenuation() { static const auto value = int(Number("BB_RCAS_ATTENUATION", 250)); return value; }
-    // bbport: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
-    // (vertex explosions); in Hunter's Nightmare it costs no measurable frame rate.
-    u32 GetReadbacksMode() { static const auto value = u32(Number("BB_READBACKS", GpuReadbacksMode::Relaxed)); return value; }
+    // Relaxed by default: FaceGen GPU-writes the face, and the next upload must see those
+    // vertices. BB_READBACKS=0 (launcher Off) used to skip that copy and explode the hunter's
+    // face; Off is treated as Relaxed. BB_READBACKS=2 is Precise (read-protects every GPU page;
+    // can flicker cloth).
+    u32 GetReadbacksMode() {
+        static const auto value = []() -> u32 {
+            const long mode = Number("BB_READBACKS", GpuReadbacksMode::Relaxed);
+            return mode == GpuReadbacksMode::Disabled ? u32(GpuReadbacksMode::Relaxed)
+                                                      : u32(mode);
+        }();
+        return value;
+    }
     // bbport: BB_VBLANK_HZ=0 (uncapped presets): vblank runs at 480 Hz so a finished frame is
     // shown within ~2 ms instead of waiting for the next display-rate vblank (below the display
     // rate frames alternated 10/20 ms at 100 Hz: judder), and GetFrameLimit() caps the rate at
@@ -51,11 +61,20 @@ public:
         }();
         return value;
     }
-    bool IsCopyGpuBuffers() { static const auto value = Flag("BB_COPY_GPU_BUFFERS", false); return value; }
+    bool IsCopyGpuBuffers() {
+        // FG can delay command processing while the guest recycles submission
+        // memory. Keep submitted PM4 (including indirect buffers) owned until
+        // its parser completes. The explicit override remains diagnostic-only.
+        static const auto value = Flag("BB_COPY_GPU_BUFFERS",
+            BbSettings::Get().startup_frame_generation >= 2);
+        return value;
+    }
     bool IsDirectMemoryAccessEnabled() { static const auto value = Flag("BB_DIRECT_MEMORY_ACCESS", false); return value; }
     bool IsDumpShaders() { static const auto value = Flag("BB_DUMP_SHADERS", false); return value; }
     bool IsFsrEnabled() { static const auto value = Flag("BB_FSR1", false); return value; }
     bool IsHdrAllowed() { static const auto value = Flag("BB_HDR", false); return value; }
+    // bbport: gamma 2.2 for the SDR picture when Windows runs the display in HDR (post_process.frag).
+    bool IsHdrGammaEnabled() { static const auto value = Flag("BB_HDR_GAMMA", true); return value; }
     bool IsNullGPU() { static const auto value = Flag("BB_NULL_GPU", false); return value; }
     bool IsPatchShaders() { return false; }
     bool IsPipelineCacheArchived() { return false; }

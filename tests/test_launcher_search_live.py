@@ -23,7 +23,7 @@ QUERIES = [
     ('2400x1080', {'output_res'}), ('monitor', {'game_monitor'}), ('zweiter bildschirm', {'game_monitor'}),
     ('second monitor', {'game_monitor'}), ('fenstergröße', {'window_size'}), ('window size', {'window_size'}),
     ('fsr', {'upscaler'}), ('dlss', {'upscaler'}), ('fps', {'fps_mode', 'frame_cap', 'show_fps'}),
-    ('fps begrenzen', {'frame_cap', 'fps_mode'}), ('fps anzeigen', {'show_fps'}), ('framegen', {'frame_gen'}),
+    ('fps begrenzen', {'frame_cap', 'fps_mode'}), ('fps anzeigen', {'show_fps'}), ('framegen', {'frame_generation', 'fg_backend'}),
     ('hdr', {'hdr'}),
     ('bewegungsunschärfe', {'effect_motion_blur'}), ('motion blur', {'effect_motion_blur'}),
     ('schärfe', {'sharpen', 'sharpness'}), ('schatten', {'effect_dynamic_shadows'}), ('lod', {'model_lod'}),

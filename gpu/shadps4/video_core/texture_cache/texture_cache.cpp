@@ -5,7 +5,10 @@
 #include <cstdio>
 #include <boost/container/small_vector.hpp>
 #include <xxhash.h>
+#include <algorithm>
+#include <boost/container/small_vector.hpp>
 
+#include "bbport_copy.h"
 #include "bbport_process_memory.h"
 #include "bbport_prompts.h"
 #include "bbport_toggles.h"
@@ -131,12 +134,42 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     }
 }
 
+/// bbport: hash of guest memory. From 1 MiB on, 256 KiB chunks go to the copy threads
+/// (BB_PARALLEL_IMAGE_HASH=1). Off: one XXH3, as before.
+static u64 GuestMemoryHash(const void* data, u64 size) {
+    static const bool parallel = [] {
+        const char* env = std::getenv("BB_PARALLEL_IMAGE_HASH");
+        return !(env && env[0] == '0');
+    }();
+    constexpr u64 Chunk = 256 * 1024;
+    if (!parallel || BbToggle::Disabled(BbToggle::ParallelImageHash) || size < 4 * Chunk ||
+        !BbCopy::Enabled()) {
+        return XXH3_64bits(data, size);
+    }
+    const auto* bytes = static_cast<const u8*>(data);
+    const u64 count = (size + Chunk - 1) / Chunk;
+    boost::container::small_vector<u64, 128> hashes(count);
+    BbCopy::ParallelFor(count, [&](std::size_t i) {
+        const u64 offset = i * Chunk;
+        hashes[i] = XXH3_64bits(bytes + offset, std::min(Chunk, size - offset));
+    });
+    return XXH3_64bits(hashes.data(), count * sizeof(u64));
+}
+
+static bool KeepMipHashes() {
+    static const bool keep = [] {
+        const char* env = std::getenv("BB_KEEP_MIP_HASHES");
+        return !(env && env[0] == '0');
+    }();
+    return keep && !BbToggle::Disabled(BbToggle::KeepMipHashes);
+}
+
 /// bbport: the guest memory a MaybeCpuDirty check compares, the same at marking and at
 /// refresh (they hashed different ranges, the whole image and its first 8x8 pixels, so the
 /// first check never matched). Such an image lies within the faulting page: cheap to hash
 /// whole, and a CPU write past its first pixels still counts.
 u64 TextureCache::MaybeDirtyHash(const Image& image) {
-    return XXH3_64bits(std::bit_cast<const u8*>(image.info.guest_address), image.info.guest_size);
+    return GuestMemoryHash(std::bit_cast<const u8*>(image.info.guest_address), image.info.guest_size);
 }
 
 void TextureCache::MarkAsMaybeDirty(ImageId image_id, Image& image) {
@@ -155,6 +188,7 @@ void TextureCache::InvalidateMemory(VAddr addr, size_t size) {
     ForEachImageInRegion(pages_start, pages_end - pages_start, [&](ImageId image_id, Image& image) {
         const auto image_begin = image.info.guest_address;
         const auto image_end = image.info.guest_address + image.info.guest_size;
+        image.mip_hashes_current = false;
         if (image.Overlaps(addr, size)) {
             // Modified region overlaps image, so the image was definitely accessed by this fault.
             // Untrack the image, so that the range is unprotected and the guest can write freely.
@@ -525,6 +559,40 @@ ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     return new_image_id;
 }
 
+/// bbport: a view never reaches past the image it resolved to. An overlap resolved to an
+/// existing image with fewer mips or layers (same address, another format or a smaller size),
+/// or a shader's constant mip index, left the descriptor's range beyond it: the barriers for
+/// the range asserted (image.cpp GetBarriers, after travelling to another area) and the Vulkan
+/// view was invalid. The first clamps are reported.
+static void ClampViewRange(TextureCache::ImageDesc& desc, const Image& image) {
+    auto& range = desc.view_info.range;
+    // In u32 throughout: the counts are u16 since 1.9 (u32 before).
+    const u32 levels = std::max<u32>(image.info.resources.levels, 1u);
+    const u32 layers = std::max<u32>(image.info.resources.layers, 1u);
+    if (range.extent.levels != 0 && range.extent.layers != 0 &&
+        u32(range.base.level) + range.extent.levels <= levels &&
+        u32(range.base.layer) + range.extent.layers <= layers) {
+        return;
+    }
+    static std::atomic<u32> reported{0};
+    if (reported.fetch_add(1, std::memory_order_relaxed) < 8) {
+        std::printf("Texture cache: view mips %u+%u layers %u+%u clamped to image %#llx "
+                    "(%u mips, %u layers, %s; requested %s)\n",
+                    range.base.level, range.extent.levels, range.base.layer, range.extent.layers,
+                    (unsigned long long)image.info.guest_address, levels, layers,
+                    vk::to_string(image.info.pixel_format).c_str(),
+                    vk::to_string(desc.info.pixel_format).c_str());
+    }
+    const u32 level = std::min<u32>(range.base.level, levels - 1);
+    const u32 layer = std::min<u32>(range.base.layer, layers - 1);
+    range.base.level = static_cast<decltype(range.base.level)>(level);
+    range.base.layer = static_cast<decltype(range.base.layer)>(layer);
+    range.extent.levels = static_cast<decltype(range.extent.levels)>(
+        std::clamp<u32>(range.extent.levels, 1u, levels - level));
+    range.extent.layers = static_cast<decltype(range.extent.layers)>(
+        std::clamp<u32>(range.extent.layers, 1u, layers - layer));
+}
+
 ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     const auto& info = desc.info;
     ASSERT(info.guest_address != 0);
@@ -566,6 +634,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (cached.view_slice > 0) {
             desc.view_info.range.base.layer = cached.view_slice;
         }
+        ClampViewRange(desc, image);
         return cached.image_id;
     }
 
@@ -645,6 +714,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     if (view_slice > 0) {
         desc.view_info.range.base.layer = view_slice;
     }
+    ClampViewRange(desc, image);
 
     cached = FindImageCacheEntry{
         .address = info.guest_address,
@@ -817,8 +887,15 @@ void TextureCache::RefreshImage(Image& image) {
 
     const u32 num_layers = image.info.resources.layers;
     const u32 num_mips = image.info.resources.levels;
+    const u32 entry_flags = u32(image.flags);
     const bool is_gpu_modified = True(image.flags & ImageFlagBits::GpuModified);
     const bool is_gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty);
+    // bbport: a GPU-dirty refresh uploads the buffer cache; guest memory the mip hashes
+    // recorded is unchanged unless something wrote it (clears mip_hashes_current).
+    // BB_KEEP_MIP_HASHES=1 skips the ~9 MB depth-copy hash. Off: hashed every time.
+    constexpr u32 CpuDirtyBits = u32(ImageFlagBits::MaybeCpuDirty) | u32(ImageFlagBits::CpuDirty);
+    const bool keep_hashes = is_gpu_dirty && image.mip_hashes_current &&
+                             (entry_flags & CpuDirtyBits) == 0 && KeepMipHashes();
 
     BbStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
@@ -838,12 +915,21 @@ void TextureCache::RefreshImage(Image& image) {
         // character creation preview went black after one frame).
         // Only for images the GPU writes or may write (small ones, targets, storage images): a
         // streamed texture hashed here cost the GPU thread its whole size again on every upload.
-        const bool track = (is_gpu_modified && !is_gpu_dirty) || mip_size <= 64_KB ||
-                           image.usage.storage || image.usage.render_target ||
-                           image.usage.depth_target;
+        // Only guest memory that is mapped: the upload reads unmapped pages as zeros
+        // (CopySparseMemory), a hash of them faulted (a texture in unmapped memory right after
+        // Continue loaded the save).
+        const u8* mip_addr = std::bit_cast<u8*>(image.info.guest_address) + mip_offset;
+        const bool track = ((is_gpu_modified && !is_gpu_dirty) || mip_size <= 64_KB ||
+                            image.usage.storage || image.usage.render_target ||
+                            image.usage.depth_target) &&
+                           Core::Memory::Instance()->ClampRangeSize(VAddr(mip_addr), mip_size) ==
+                               mip_size;
         if (track) {
-            const u8* mip_addr = std::bit_cast<u8*>(image.info.guest_address) + mip_offset;
-            const u64 mip_hash = XXH3_64bits(mip_addr, mip_size);
+            u64 mip_hash = image.mip_hashes[m];
+            if (!keep_hashes) {
+                BbStats::Timer hash_timer{BbStats::t_refresh_hash};
+                mip_hash = GuestMemoryHash(mip_addr, mip_size);
+            }
             if (is_gpu_modified && !is_gpu_dirty && image.mip_hashes[m] == mip_hash) {
                 continue;
             }
@@ -866,6 +952,9 @@ void TextureCache::RefreshImage(Image& image) {
             .imageExtent = {extent_width, extent_height, depth},
         });
     }
+
+    image.mip_hashes_current =
+        image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end;
 
     if (image_copies.empty()) {
         image.flags &= ~ImageFlagBits::Dirty;
@@ -1004,6 +1093,7 @@ void TextureCache::TrackImageTail(ImageId image_id) {
 
 void TextureCache::UntrackImage(ImageId image_id) {
     auto& image = slot_images[image_id];
+    image.mip_hashes_current = false;
     if (!image.IsTracked()) {
         return;
     }

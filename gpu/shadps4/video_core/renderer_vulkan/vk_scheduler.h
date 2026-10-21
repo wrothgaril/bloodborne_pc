@@ -16,8 +16,10 @@
 #include <mutex>
 #include <thread>
 #include <queue>
+#include <source_location>
 
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "common/assert.h"
 #include "common/interval_set.h"
 #include "common/unique_function.h"
@@ -684,7 +686,7 @@ public:
     void Flush();
 
     /// Sends the current execution context to the GPU and waits for it to complete.
-    void Finish();
+    void Finish(std::source_location where = std::source_location::current());
 
     // Applied to the next submission, before it can consume external GPU output.
     void WaitExternal(vk::Semaphore semaphore, u64 value) {
@@ -696,10 +698,14 @@ public:
     /// bbport: waits for the work submitted so far but leaves the command buffer being
     /// recorded open, so a CommandBuffer() the caller holds stays valid (Finish() submits it:
     /// recording into a submitted buffer crashes AMD's driver).
-    void WaitSubmitted();
+    void WaitSubmitted(std::source_location where = std::source_location::current());
 
     /// Waits for the given tick to trigger on the GPU.
-    void Wait(u64 tick);
+    /// bbport: `where` is counted per call site with BB_FRAME_STATS (PrintWaitSites).
+    void Wait(u64 tick, std::source_location where = std::source_location::current());
+
+    /// bbport: the call sites that waited for the GPU longest since the last call.
+    static void PrintWaitSites(double window_seconds);
 
     /// Attempts to execute operations whose tick the GPU has caught up with.
     void PopPendingOperations();
@@ -709,6 +715,34 @@ public:
 
     /// Ends current rendering scope.
     void EndRendering();
+
+    /// bbport: Reflex frame attribution associated with this scheduler / recording batch.
+    void SetFrameId(u64 frame_id) {
+        recording_id.SetFrameId(frame_id);
+    }
+    [[nodiscard]] u64 GetFrameId() const noexcept {
+        return recording_id.RecordingId();
+    }
+
+    /// bbport: adopt the guest simulation identity captured when a top-level graphics
+    /// submission was accepted (see Liverpool::SubmitGfx). The accepted value applies
+    /// immediately to the currently open buffer and persistently to every command buffer
+    /// allocated for that submission, instead of the live counter that the guest may already
+    /// have advanced past. A new source boundary is the only thing that replaces it.
+    void SetSubmissionFrameId(u64 frame_id);
+
+    /// bbport: Out-of-band queue marker configuration for compositor / presentation blits.
+    void SetOutOfBand(bool oob) {
+        is_out_of_band = oob;
+    }
+    // Latency attribution and queue routing are separate: CPU flip preparation
+    // remains ordered with game draws even when its markers are out of band.
+    void SetPresentQueue(bool use_present) {
+        use_present_queue = use_present;
+    }
+    [[nodiscard]] bool IsOutOfBand() const noexcept {
+        return is_out_of_band;
+    }
 
     /// Sets a function to be called on every scheduler submission.
     void SetSubmitCallback(SubmitFunc&& on_submit) {
@@ -736,6 +770,9 @@ public:
             direct_recordings.fetch_add(1, std::memory_order_relaxed);
             TraceDirectRecording(__builtin_return_address(0));
         }
+        // bbport: a caller that takes the raw command buffer may record into it. Conservative:
+        // over-approximating only keeps the Reflex boundary flush, never drops recorded work.
+        has_recorded_work = true;
         return current_cmdbuf;
     }
 
@@ -746,6 +783,8 @@ public:
     /// everything it uses (capture by value): it may run later on the recording thread.
     template <typename Func>
     void Record(Func&& func) {
+        // bbport: any deferred or direct command counts as recorded work for the boundary flush.
+        has_recorded_work = true;
         if (!recording_threaded || direct_mode) {
             func(current_cmdbuf);
             return;
@@ -815,7 +854,7 @@ public:
     /// copy threads (BbCopy::Async) must be done before the guest learns the GPU is past them
     /// (it may then rewrite the memory, e.g. UI vertices: flickering) and before the
     /// submission that reads them. Waits for all.
-    void WaitHostCopies();
+    void WaitHostCopies(std::source_location where = std::source_location::current());
 
     /// Runs `copy` on the recording thread in order with the commands (the thread spins for
     /// work anyway, so small copies cost no wakeup); WaitHostCopies() covers it.
@@ -837,7 +876,13 @@ public:
     /// fences, flip): waits until every signal handed to SignalAfterHostCopies ran, so that
     /// the write cannot overtake an earlier fence. Otherwise the guest, seeing the later value,
     /// may free memory the earlier fence then writes into (corrupted heap, guest fault).
-    void WaitDeferredSignals();
+    void WaitDeferredSignals(std::source_location where = std::source_location::current());
+    /// BB_FENCE_ORDER (default): wait only until `issued` (snapshot of DeferredSignalsIssued).
+    void WaitDeferredSignalsUpTo(u64 issued,
+                                 std::source_location where = std::source_location::current());
+    [[nodiscard]] u64 DeferredSignalsIssued() const noexcept {
+        return deferred_signals_issued.load(std::memory_order_relaxed);
+    }
 
     /// Whether a render pass with exactly this state is open.
     [[nodiscard]] bool IsRenderingWith(const RenderState& state) const {
@@ -912,6 +957,13 @@ private:
     vk::CommandBuffer current_cmdbuf;
     vk::Semaphore pending_external_wait{};
     u64 pending_external_value{};
+    /// bbport: the recording identity state machine (see vk_reflex.h). It applies an accepted
+    /// submission identity immediately and keeps it across every allocation of that submission.
+    Reflex::RecordingIdentity recording_id;
+    /// bbport: set by Record()/CommandBuffer(), cleared when a new command buffer is allocated.
+    bool has_recorded_work = false;
+    bool is_out_of_band = false;
+    bool use_present_queue = false;
     std::condition_variable_any event_cv;
     struct PendingOp {
         Common::UniqueFunction<void> callback;

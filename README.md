@@ -16,6 +16,79 @@ https://nativeretro.com/
 > resolution, effects); other versions run at 30 FPS.
 > This project is not affiliated with Sony Interactive Entertainment or FromSoftware.
 
+## How this build differs from upstream
+
+This branch is upstream's Windows release **1.9.4**
+([Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc), `windows-v1.9.4`) with
+the pull requests below merged on top, each from its author's latest push, plus this fork's own
+DLSS and integration commits. Apart from this section and the build notes, this README is
+upstream 1.9.4's.
+
+### Added
+
+| PR | Author | What it adds |
+|---|---|---|
+| [#69](https://github.com/Supermedo/bloodborne_pc/pull/69) | FIocker | Paced DLSS (2x–4x) and FSR 3.1 (2x) frame generation with NVIDIA Reflex. It **replaces** upstream's frame generation; see below. |
+| [#81](https://github.com/Supermedo/bloodborne_pc/pull/81) | FIocker | Optional DLSS neural rendering: presets, pass chain, toggle hotkey (`nr_*` settings, launcher and in-game menu). |
+| [#71](https://github.com/Supermedo/bloodborne_pc/pull/71) | fliperama86 | Gamma 2.2 for the SDR picture when Windows runs the display in HDR (`BB_HDR_GAMMA=0` turns it off). |
+| [#78](https://github.com/Supermedo/bloodborne_pc/pull/78) | andrecabralgit | Awaken's GPU optimizations: occlusion queries, async pipeline compiles, sampler and texture-set memos, mip-hash reuse, faster shader preload, death-loading delay fix. |
+| [#92](https://github.com/Supermedo/bloodborne_pc/pull/92) | bbport | One shader cache root for every install (`BB_CACHE_DIR`), a size cap (`BB_CACHE_MAX_MB`, default 2048) and statistics (`BB_CACHE_STATS=1`). |
+| [#87](https://github.com/Supermedo/bloodborne_pc/pull/87) | DarkSpartan | Crash fixes: texture views clamped to their image, larger per-frame render heaps (eboot patch), GPU waits that stop on device loss, hashing only mapped guest memory. |
+| [#80](https://github.com/Supermedo/bloodborne_pc/pull/80) | andrecabralgit | A deeper Windows audio queue (about four device periods) against crackling. |
+| this fork | | DLSS 4.5 presets (L/M, `BB_DLSS_PRESET`) and a native DLSS bridge build; shader-cache IO hardening; a guard for the frame heap patch; tests and packaging. See [docs/DLSS_BUILD.md](docs/DLSS_BUILD.md). |
+
+### Behaviour that differs from 1.9.4
+
+- **Frame generation settings are new.** `frame_generation` (`off`/`2x`/`3x`/`4x`), `fg_backend`
+  (`dlss`/`fsr`/`fsr401`) and `reflex` (`off`/`on`/`boost`) replace upstream's `frame_gen`,
+  `frame_gen_multiplier` and `frame_gen_fit_display`, which are no longer read: coming from
+  upstream, pick frame generation again. There is no "fit to display refresh"; #69's presenter
+  paces the generated frames instead. A changed choice applies on the next start.
+- **AMD ML-FG 4.0.1 is kept** as the third backend (`fsr401`: Radeon RX 9000, Windows 11, 2x,
+  SDR). It runs serially on the render queue under #69's pacing, Reflex and HUD pass instead of
+  upstream's detached completion queue (upstream measured the detached form about 6% faster on
+  an RX 9070). A saved ML-FG choice the GPU cannot run uses FSR 3.1 for that session.
+- **The DLSS bridge is ABI 3.** `bbport_dlss.dll` from upstream releases has a different frame
+  generation table and is rejected; use the bridge this build packages.
+- **#78's optimizations are on by default** and were measured only on the shadPS4 0.20.1 GPU
+  layer, which upstream 1.9.3 replaced with 1.8.2's. If something looks wrong, set the switch
+  to 0: `BB_OCCLUSION`, `BB_ASYNC_PIPELINES`, `BB_SAMPLER_MEMO`, `BB_KEEP_MIP_HASHES`,
+  `BB_PARALLEL_IMAGE_HASH`, `BB_LOCAL_TEXTURE_SETS`, `BB_MEMO_REVALIDATE`, `BB_SKIP_UNCOMPILED`,
+  `BB_LATE_PIPELINE_BIND`, `BB_FENCE_ORDER`, `BB_SUBMIT_END_TASKS`, `BB_GPU_THREAD_PRIORITY`,
+  `BB_FAST_PRELOAD` (`BB_DMA_WAITS` stays opt-in).
+- **GPU readbacks have no Off** (it broke the hunter's face); Off is treated as Relaxed.
+- **Wider outputs keep a centred HUD** by default (`hud_position=0`) with #69's centred UI
+  stage; 1280×800 and 1080×1920 are added to the output sizes.
+- **The shader cache is pruned** to 2048 MiB by default (`BB_CACHE_MAX_MB=0`: no cap).
+- **Larger Frame Heaps** is written whenever the eboot's two heap instructions are original,
+  independent of the frame rate, resolution and effect groups.
+- **FSR 3.1 frame generation** uses #69's `fsr-vulkan` patches 0003–0005; 0005 replaces 1.9.2's
+  narrower allocation-retirement patch.
+- The swapchain has one more image while frame generation is on, and an in-game restart re-reads
+  the frame generation and output settings instead of keeping the launcher's start values.
+
+### Not applied, because 1.9.4 already covers it
+
+- **#75** (depth of field with live resolution) and **#90** (patch groups for modified eboots)
+  are part of 1.9.4.
+- **#84** (driver memory budget on discrete GPUs) and **#63** (pressure-aware eviction) are
+  recorded without code changes: 1.9.4's texture cache keeps the unused buffer reserve out of
+  the usage and a 60% pressure mark below 8 GB (`BB_GC_PRESSURE_PERCENT`); `BB_GC_BUDGET_MB`
+  still forces a budget.
+- **#78's per-size object-motion images**: 1.9.4's opt-in target cache
+  (`BB_OBJECT_MOTION_CACHE`, the launcher's motion-vector cache) solves the same problem.
+- **#80's audio-thread priority**: 1.9.4 already raises the FMOD threads (`BB_THREAD_PRIORITY=0`
+  turns it off).
+
+### Testing status
+
+Built with MSYS2 CLANG64. The native tests pass on an RTX 5090, except the ML-FG stress test,
+which needs an RX 9000 and fails the same way on upstream; `camera-motion-test`,
+`scene-resolution-test` and `taa-shader-test` do not link on Windows, as in upstream 1.9.4. The
+Python suite has the same environment-dependent failures as upstream 1.9.4 on the same machine.
+Not yet tested in the game: frame generation and Reflex on 1.9.4, ML-FG under #69's pacing,
+and #78's defaults on the 1.8.2 GPU layer.
+
 ## Features
 
 - **Online play (beta):** messages, bloodstains and wandering ghosts from other hunters through
@@ -144,6 +217,17 @@ Crashes on AMD RDNA2 cards, slow FSR 4 and online errors are collected in
 
 ## Building from source
 
+This build's pull requests on top of Windows 1.9.4 are listed in
+[How this build differs from upstream](#how-this-build-differs-from-upstream). Their earlier
+integration on 1.9.1 and its measurements are recorded in [integration notes](docs/PR_STACK_INTEGRATION.md),
+[cache controls and validation](docs/CACHE_OPTIMIZATION.md) and
+[stability integration notes](docs/STABILITY_PRS.md).
+
+For the custom **DLSS 4.5** package, native PowerShell bridge build, and the current
+DLSS 5 SDK limitation, see [docs/DLSS_BUILD.md](docs/DLSS_BUILD.md).
+The verified SDK search and remaining DLSS 5 dependency are recorded in
+[docs/DLSS5_SDK_STATUS.md](docs/DLSS5_SDK_STATUS.md).
+
 See [packaging/windows/README.md](packaging/windows/README.md): MSYS2 CLANG64, `bash build.sh`,
 then `bash packaging/windows/package.sh`. DLSS is built separately with
 `packaging/windows/build_dlss.sh` (needs Visual Studio 2022).
@@ -162,6 +246,8 @@ adapted from [bbhost](https://github.com/droogie/bbhost) by droogie (GPL-3.0-or-
 [gpu/bbnet/SHADNET-PORT.md](gpu/bbnet/SHADNET-PORT.md)). Thanks to Metr1k and The Hunter's Dream
 team for their guidance, and to Wozzardman's [shadp2p](https://github.com/Wozzardman/shadp2p),
 which bbport's first online version was built on.
+Awaken's engine work (occlusion queries, mip-hash reuse, async pipeline compiles, draw-thread
+waits) is ported behind `BB_*` switches; see [docs/parallel_gpu.md](docs/parallel_gpu.md).
 
 The low-VRAM profile for 4 GB graphics cards comes from the 4 GB mod by **fixdag** and
 **bashiku**.

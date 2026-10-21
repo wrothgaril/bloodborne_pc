@@ -52,31 +52,23 @@ int main(int argc, char **argv) {
             }
         }
         auto &settings = BbSettings::Get();
-        settings.frame_gen = BbSettings::FrameGenFsr401;
-        FrameGenerator provider_check(instance, scheduler);
+        // The frame generation backends probe their providers when created (vk_frame_generation.cpp).
+        FrameGeneration provider_check(instance, scheduler);
+        const int ml = BbSettings::FgFsr401;
         if (std::getenv("BB_CHECK_UNSUPPORTED")) {
-            if (settings.fg401_supported || settings.frame_gen != BbSettings::FrameGenFsr3)
-                throw std::runtime_error("Unavailable provider did not fall back to FSR 3.1");
-            std::puts("PASS unavailable ML provider falls back to FSR 3.1 before generation");
+            // Not offered: the presenter runs a saved ML-FG choice as FSR 3.1 for the session.
+            if (settings.fg401_supported || provider_check.Available(ml) ||
+                provider_check.MaxGenerated(ml) != 0 || provider_check.Configure(ow, oh, vk::Format::eR8G8B8A8Unorm, 2, ml))
+                throw std::runtime_error("Unavailable ML provider was offered");
+            std::puts("PASS unavailable ML provider is not offered before generation");
             return 0;
         }
-        if (!settings.fg401_supported || provider_check.WantedCount() != 1)
+        if (!settings.fg401_supported || !provider_check.Available(ml) || provider_check.MaxGenerated(ml) != 1)
             throw std::runtime_error("Supported ML provider selection failed");
-        settings.frame_gen = BbSettings::FrameGenFsr3;
-        if (provider_check.WantedCount() != 1)
-            throw std::runtime_error("FSR 3.1 was removed");
-        settings.frame_gen = BbSettings::FrameGenOff;
-        if (provider_check.WantedCount() != 0)
-            throw std::runtime_error("FG off does not disable generation");
-        settings.frame_gen = BbSettings::FrameGenFsr401;
-        settings.fg401_supported = false;
-        auto empty_command = scheduler.CommandBuffer();
-        provider_check.Generate(empty_command, {}, {}, {}, {}, {}, 0, 0, {});
-        if (settings.frame_gen != BbSettings::FrameGenFsr3)
-            throw std::runtime_error("Manual unsupported ML selection bypasses renderer guard");
-        settings.fg401_supported = true;
-        settings.frame_gen = BbSettings::FrameGenOff;
-        std::puts("PASS renderer ML/FSR3/off choices and unsupported runtime fallback");
+        if (!provider_check.Configure(ow, oh, vk::Format::eR8G8B8A8Unorm, 2, ml))
+            throw std::runtime_error("Supported ML provider could not be configured");
+        provider_check.Shutdown();
+        std::puts("PASS renderer ML provider availability and configuration");
 
         const bool overlap = std::getenv("BB_FG401_CHECK_OVERLAP") != nullptr;
         Scheduler completion(instance, false, instance.GetPresentQueue());

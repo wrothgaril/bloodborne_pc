@@ -7,11 +7,16 @@
 #include "common/singleton.h"
 #include "common/types.h"
 
+#include <chrono>
 #include <functional>
 #include <thread>
 #include <vector>
 
 namespace Storage {
+
+struct CacheStatistics {
+    u64 hits{}, misses{}, read_bytes{}, written_bytes{};
+};
 
 enum class BlobType : u32 {
     ShaderMeta,
@@ -27,7 +32,14 @@ public:
     }
 
     void Open();
+    // Explicit root/serial also supports isolated cache verification without a guest process.
+    void Open(const std::filesystem::path& root, std::string_view serial);
+    [[nodiscard]] CacheStatistics Statistics() const;
+    void ReportStatistics() const;
     void Close();
+    /// bbport: waits until the queued writes are on disk, for exits that skip `Close()`.
+    /// False when `timeout` passed first.
+    bool Flush(std::chrono::milliseconds timeout);
     [[nodiscard]] bool IsOpened() const {
         return opened;
     }

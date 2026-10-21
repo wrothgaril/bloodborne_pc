@@ -713,8 +713,8 @@ def profile(rating, res, output, current=None, goal='smooth'):
         add('ini', 'object_motion', picture >= 4 and not four_gb,
             'Object motion vectors cost about 5–10% FPS: on from "Recommended".')
     frame_gen_ok = level >= 4 and (g.frame_gen or g.vram >= 12)
-    if current.get('frame_gen', 'off') != 'off' and not frame_gen_ok:
-        add('ini', 'frame_gen', 'off', 'Frame generation needs about 60 base FPS and 12–16 GB of video memory.')
+    if current.get('frame_generation', 'off') != 'off' and not frame_gen_ok:
+        add('ini', 'frame_generation', 'off', 'Frame generation needs about 60 base FPS and 12–16 GB of video memory.')
     return out
 
 

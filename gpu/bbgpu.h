@@ -24,6 +24,9 @@ void bbnet_set_image(unsigned char *image, uint64_t size);
 void bbnet_initialize(void);
 /* Creates window, Vulkan device, presenter and GPU command processor. */
 int bbgpu_init(const BbGpuConfig *config);
+/* Unless BB_CACHE_FLUSH_ON_EXIT=0: writes the queued shader cache blobs before an exit that skips
+ * destructors (window closed, guest exit, restart). Waits at most two seconds. */
+void bbgpu_flush_cache(void);
 /* Function for an imported NID ("NID#lib#mod"), or 0 when the GPU library does not provide it. */
 uintptr_t bbgpu_resolve(const char *scoped_nid);
 /* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */
@@ -78,6 +81,15 @@ int bbgpu_input_reload_requested(void);
  * Safe from any thread; applied on the window thread's next
  * PollEvents. */
 void bbgpu_mouse_camera_configure(int direct, float sensitivity, float scale_x, float scale_y, int sync);
+/* NVIDIA Reflex: called before pad input sampling (driver frame pacing). */
+void bbgpu_reflex_pre_input_sample(void);
+/* NVIDIA Reflex: called immediately after pad input has been sampled. */
+void bbgpu_reflex_on_input_sampled(void);
+/* NVIDIA Reflex: called when a simulation cycle ends (e.g. at flip submission). */
+void bbgpu_reflex_on_simulation_end(void);
+/* Returns the current monotonic simulation frame ID (0 if not active/supported). */
+uint64_t bbgpu_reflex_current_sim_frame_id(void);
+
 /* Number of symbols registered by the vendored libraries (diagnostics). */
 unsigned bbgpu_symbol_count(void);
 #ifdef __cplusplus

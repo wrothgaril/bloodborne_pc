@@ -234,16 +234,76 @@ TWEAKS = [
     ('rebirth', ("Rebirth at the Doll: back to your origin's attributes for 5 Insight, levels regained free",
                  'Перерождение у Куклы: характеристики происхождения за 5 озарений, уровни возвращаются бесплатно'), True),
 ]
+# Neural rendering (bbport_neural_settings.h): one nr_* key per setting, written to the same
+# bbport.ini the in-game menu edits. Passes past the pass count are ignored by the game.
+NR_PASS_COUNT = 4
+NR_PASS_DEFAULTS = (('enabled', '1'), ('stage', 'post'), ('style', '0'), ('intensity', '1.00'),
+                    ('structure', '1.00'), ('tone', '1.00'), ('auto_skin', '0'), ('skin_structure', '1.00'))
+NR_DEFAULTS = {'nr_enabled': '0', 'nr_preset': '0', 'nr_input_scale': '1.00', 'nr_resolve': 'auto',
+               'nr_ui_correction': '1', 'nr_hotkey': '86', 'nr_passes': '1',
+               'nr_transfer_strength': '1.00', 'nr_colour_strength': '1.00', 'nr_max_ratio': '2.00',
+               'nr_white_point': '1.00',
+               **{f'nr_pass{i}_{field}': default for i in range(1, NR_PASS_COUNT + 1)
+                  for field, default in NR_PASS_DEFAULTS}}
+NR_FLAGS = {'nr_enabled', 'nr_ui_correction',
+            *(f'nr_pass{i}_{field}' for i in range(1, NR_PASS_COUNT + 1)
+              for field in ('enabled', 'auto_skin'))}
+NR_FLOATS = {'nr_input_scale', 'nr_transfer_strength', 'nr_colour_strength', 'nr_max_ratio',
+             'nr_white_point',
+             *(f'nr_pass{i}_{field}' for i in range(1, NR_PASS_COUNT + 1)
+               for field in ('intensity', 'structure', 'tone', 'skin_structure'))}
+
+
+def nr_pass_add(values, count):
+    """The pass chain with one more pass: the new slot starts from its defaults.
+
+    Values is a {key: text} mapping of the nr_* settings (see nr_pass_values); the returned copy
+    keeps every other key untouched. At NR_PASS_COUNT the chain is left as it is.
+    """
+    if count >= NR_PASS_COUNT:
+        return dict(values)
+    out = dict(values)
+    for field, default in NR_PASS_DEFAULTS:
+        out[f'nr_pass{count + 1}_{field}'] = default
+    out['nr_passes'] = str(count + 1)
+    return out
+
+
+def nr_value_text(key, value):
+    """The ini text of a pass value: flags as 1/0, floats with two decimals."""
+    if key in NR_FLAGS:
+        return '1' if value in (True, 1, '1') else '0'
+    if key in NR_FLOATS:
+        return f'{float(value):.2f}'
+    return str(value)
+
+
+def nr_pass_delete(values, removed, count):
+    """The pass chain without pass `removed` (1-based): later passes move up and keep their
+    settings, the freed last slot returns to its defaults."""
+    if count <= 1 or not 1 <= removed <= count:
+        return dict(values)
+    out = dict(values)
+    for i in range(removed, count):
+        for field, _default in NR_PASS_DEFAULTS:
+            out[f'nr_pass{i}_{field}'] = values[f'nr_pass{i + 1}_{field}']
+    for field, default in NR_PASS_DEFAULTS:
+        out[f'nr_pass{count}_{field}'] = default
+    out['nr_passes'] = str(count - 1)
+    return out
+
+
 # Effects that are taste, not performance: on Picture & performance (the others on All graphics).
 TASTE_EFFECTS = ('effect_chromatic_aberration', 'effect_dof', 'effect_motion_blur')
-INI_FLAGS = {'sharpen', 'object_motion', 'object_motion_cache', 'show_fps', 'mute_unfocused', 'frame_gen_fit_display',
+INI_FLAGS = {'sharpen', 'object_motion', 'object_motion_cache', 'show_fps', 'mute_unfocused', *NR_FLAGS,
              *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
-INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
+INI_FLOATS = {'sharpness', *NR_FLOATS}
+INI_DEFAULTS = {'upscaler': 'fsr4', 'frame_generation': 'off', 'fg_backend': 'dlss', 'reflex': 'on',
+                'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'show_fps': '1', 'output_res': '1920x1080', 'model_lod': '0',
                 'fsr411_backend': 'vk', 'object_motion_cache': '0',
-                'live_resolution': 'auto', 'hud_position': '100', 'fov': '43', 'mute_unfocused': '0',
-                'button_prompts': 'auto',
-                'frame_gen': 'off', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '0',
+                'live_resolution': 'auto', 'hud_position': '0', 'fov': '43', 'mute_unfocused': '0',
+                'button_prompts': 'auto', **NR_DEFAULTS,
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '', 'cache_dir': '',
                 'dlc_dir': '',
@@ -290,21 +350,25 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'test_repeats': '1', 'test_minutes': '10', 'test_saves': {}}  # the last check of eboot.bin (bbport_help), kept while the file is unchanged
 # bbbridge's own app reads and writes the online_* keys above: keep their names.
 
+# Frame generation backends (vk_frame_generation.cpp): DLSS up to 4x, FSR 3.1 and ML-FG 2x.
+FG_BACKENDS = [('dlss', ('NVIDIA DLSS Frame Generation (GeForce RTX 40/50)', 'NVIDIA DLSS (GeForce RTX 40/50)')),
+               ('fsr', ('AMD FSR 3.1 Frame Generation (any GPU)', 'AMD FSR 3.1 (любая видеокарта)')),
+               ('fsr401', ('AMD ML-FG 4.0.1 (RX 9000, 2× SDR, experimental)',))]
+FG_MODES_DLSS = [('off', ('Off', 'Выключено')),
+                 ('2x', ('2x (Double FPS)', '2x (Удвоение FPS)')),
+                 ('3x', ('3x (Triple FPS)', '3x (Утроение FPS)')),
+                 ('4x', ('4x (Quadruple FPS)', '4x (Четырёхкратный FPS)'))]
+FG_MODES_FSR = [('off', ('Off', 'Выключено')),
+                ('2x', ('2x (Double FPS)', '2x (Удвоение FPS)'))]
+REFLEX_MODES = [('off', ('Off', 'Выключено')),
+                ('on', ('On', 'Включено')),
+                ('boost', ('On + Boost', 'Включено + Boost'))]
 UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
              ('fsr4', ('FSR 4 (best quality)', 'FSR 4 (лучшее качество)')),
              ('fsr411', ('FSR 4.1.1 (experimental)', 'FSR 4.1.1 (экспериментально)')),
              ('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
              ('taa', ('TAA (native resolution anti-aliasing)', 'TAA (нативное сглаживание)')),
              ('off', ('Off', 'Выключен'))]
-# Frames generated between two of the game's (vk_frame_generation.cpp).
-FRAME_GENERATION = [('off', ('Off', 'Выключена')),
-                    ('fsr3', ('AMD FSR 3.1 Frame Generation (any GPU)', 'AMD FSR 3.1 (любая видеокарта)')),
-                    ('fsr401', ('AMD ML-FG 4.0.1 (RX 9000, 2× SDR, experimental)',)),
-                    ('dlss', ('NVIDIA DLSS Frame Generation (GeForce RTX 40/50)',
-                              'NVIDIA DLSS (GeForce RTX 40/50)'))]
-FRAME_GEN_MULTIPLIERS = [('2', ('2× (one generated frame)', '2× (один кадр)')),
-                         ('3', ('3× (DLSS on GeForce RTX 50)', '3× (DLSS на GeForce RTX 50)')),
-                         ('4', ('4× (DLSS on GeForce RTX 50)', '4× (DLSS на GeForce RTX 50)'))]
 PRESETS = [('0', ('Native AA (×1.0)',)), ('1', ('Quality (×1.5)',)), ('2', ('Balanced (×1.7)',)),
            ('3', ('Performance (×2)',)), ('4', ('Ultra Performance (×3)',))]
 FSR411_BACKENDS = [('vk', ('Vulkan (fsr4vk)',)), ('dx12', ('AMD DX12',))]
@@ -324,9 +388,10 @@ def native_fsr411_present():
 
 OUTPUTS = [('1280x720', ('1280 × 720 (Steam Deck)',)), ('1920x1080', ('1920 × 1080',)),
            ('2560x1440', ('2560 × 1440',)), ('3840x2160', ('3840 × 2160 (4K)',)),
-           ('2560x1080', ('2560 × 1080 (21:9)',)), ('3440x1440', ('3440 × 1440 (21:9)',)),
-           ('3840x1600', ('3840 × 1600 (21:9)',)), ('5120x2160', ('5120 × 2160 (21:9)',)),
-           ('3840x1080', ('3840 × 1080 (32:9)',)), ('5120x1440', ('5120 × 1440 (32:9)',))]
+           ('1280x800', ('1280 × 800 (16:10)',)), ('2560x1080', ('2560 × 1080 (21:9)',)),
+           ('3440x1440', ('3440 × 1440 (21:9)',)), ('3840x1600', ('3840 × 1600 (21:9)',)),
+           ('5120x2160', ('5120 × 2160 (21:9)',)), ('3840x1080', ('3840 × 1080 (32:9)',)),
+           ('5120x1440', ('5120 × 1440 (32:9)',)), ('1080x1920', ('1080 × 1920 (Portrait)',))]
 # No field of view here: bbport.ini fov (scripts/fov.py) scales the camera table LockCamParam, but
 # measured in the game 90 degrees gives about 48 (2026-10-20). Back once it works.
 # The game's button icons (gpu/shim/bbport_prompts.cpp): with the device in use, or always one kind.
@@ -340,6 +405,141 @@ LIVE = [('auto', ('Auto (by graphics card)', 'Авто (по видеокарт�
         ('1', ('On (change without restarting)', 'Включена (без перезапуска)'))]
 LODS = [('0', ('As in the game', 'Как в игре')), ('-2', ('Highest (−2)', 'Максимальная (−2)')),
         ('1', ('Lower (1)', 'Ниже (1)')), ('2', ('Lowest (2)', 'Минимальная (2)'))]
+# Neural rendering (DLSS NR). The hotkey values are SDL scancodes, as in bbport_neural_settings.h.
+NR_PRESETS = [('0', ('Automatic',)), ('1', ('Original',)), ('2', ('Optimized',))]
+NR_RESOLVE = [('auto', ('Auto (1:1 at a 100% input scale)',)),
+              ('residual', ('Residual (Magpie + Lanczos3, low detail)',)),
+              ('ratio', ('Ratio (luma-ratio resolve)',))]
+NR_STAGES = [('pre', ('Pre-upscale',)), ('post', ('Post-upscale',)), ('present', ('Present',))]
+NR_STYLES = [('0', ('Style 0',)), ('1', ('Style 1',)), ('2', ('Style 2',))]
+def nr_runtime_version():
+    """Read the selected model's fixed file version without loading its executable code."""
+    directory = Path(os.environ.get('BB_NR_RUNTIME') or PORT_DIR / 'bin')
+    if directory.suffix.lower() == '.dll':
+        directory = directory.parent
+    try:
+        from ctypes import wintypes
+        library = ctypes.WinDLL('version.dll')
+        size_fn = library.GetFileVersionInfoSizeW
+        size_fn.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+        size_fn.restype = wintypes.DWORD
+        info_fn = library.GetFileVersionInfoW
+        info_fn.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+        info_fn.restype = wintypes.BOOL
+        query_fn = library.VerQueryValueW
+        query_fn.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT)]
+        query_fn.restype = wintypes.BOOL
+        path = str(directory / 'nvngx_dlssnr.dll')
+        ignored = wintypes.DWORD()
+        size = size_fn(path, ctypes.byref(ignored))
+        if not size:
+            return None
+        data = ctypes.create_string_buffer(size)
+        if not info_fn(path, 0, size, data):
+            return None
+        value, length = ctypes.c_void_p(), wintypes.UINT()
+        if not query_fn(data, '\\', ctypes.byref(value), ctypes.byref(length)) or not value.value or length.value < 52:
+            return None
+        info = ctypes.cast(value, ctypes.POINTER(wintypes.DWORD))
+        if info[0] != 0xfeef04bd:
+            return None
+        return (info[2] >> 16, info[2] & 0xffff, info[3] >> 16, info[3] & 0xffff)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def nr_optimized_supported(version):
+    return version is not None and version >= (310, 9, 16, 0)
+
+
+_nr_sdl = None
+# Windows set-1 positions of printable keys. Translate the physical position rather than
+# the layout's glyph: e.g. German Z/Y must bind the key that was actually pressed.
+NR_SCAN_NAMES = {**dict(zip(range(0x10, 0x1a), 'QWERTYUIOP')),
+                 **dict(zip(range(0x1e, 0x27), 'ASDFGHJKL')),
+                 **dict(zip(range(0x2c, 0x33), 'ZXCVBNM')),
+                 **dict(zip(range(0x02, 0x0c), '1234567890')),
+                 0x0c: '-', 0x0d: '=', 0x1a: '[', 0x1b: ']', 0x27: ';',
+                 0x28: "'", 0x29: '`', 0x2b: '\\', 0x33: ',', 0x34: '.', 0x35: '/'}
+
+
+def nr_keyboard():
+    """Use SDL's own key names/scancodes, without initializing video or the GPU."""
+    global _nr_sdl
+    if _nr_sdl is None:
+        path = PORT_DIR / 'bin' / 'SDL3.dll'
+        if not path.is_file():
+            path = next((Path(folder) / 'SDL3.dll' for folder in os.get_exec_path()
+                         if (Path(folder) / 'SDL3.dll').is_file()), path)
+        library = ctypes.CDLL(str(path))
+        library.SDL_GetScancodeFromName.argtypes = [ctypes.c_char_p]
+        library.SDL_GetScancodeFromName.restype = ctypes.c_int
+        library.SDL_GetScancodeName.argtypes = [ctypes.c_int]
+        library.SDL_GetScancodeName.restype = ctypes.c_char_p
+        _nr_sdl = library
+    return _nr_sdl
+
+
+def nr_scancode(keysym, keycode=None):
+    if os.name == 'nt' and keycode is not None:
+        scan = ctypes.windll.user32.MapVirtualKeyW(int(keycode), 4)
+        if scan in NR_SCAN_NAMES:
+            return nr_keyboard().SDL_GetScancodeFromName(NR_SCAN_NAMES[scan].encode('ascii'))
+    name = keysym_to_name(keysym)
+    aliases = {'enter': 'Return', 'pgup': 'PageUp', 'pgdown': 'PageDown',
+               'lshift': 'Left Shift', 'rshift': 'Right Shift', 'lctrl': 'Left Ctrl',
+               'rctrl': 'Right Ctrl', 'lalt': 'Left Alt', 'ralt': 'Right Alt',
+               'lwin': 'Left GUI', 'rwin': 'Right GUI', 'lmeta': 'Left GUI', 'rmeta': 'Right GUI',
+               'kpperiod': 'Keypad .', 'kpcomma': 'Keypad ,', 'kpslash': 'Keypad /',
+               'kpasterisk': 'Keypad *', 'kpminus': 'Keypad -', 'kpplus': 'Keypad +',
+               'kpequals': 'Keypad =', 'kpenter': 'Keypad Enter', 'grave': '`', 'minus': '-',
+               'equals': '=', 'lbracket': '[', 'rbracket': ']', 'backslash': '\\',
+               'semicolon': ';', 'apostrophe': "'", 'comma': ',', 'period': '.', 'slash': '/',
+               'pausebreak': 'Pause'}
+    if name and re.fullmatch(r'kp\d', name):
+        name = 'Keypad ' + name[-1]
+    elif name:
+        name = aliases.get(name, name)
+    elif re.fullmatch(r'F(?:1\d|2[0-4])', keysym):
+        name = keysym
+    if not name:
+        return 0
+    return nr_keyboard().SDL_GetScancodeFromName(name.encode('utf-8'))
+
+
+def nr_hotkey_name(value):
+    try:
+        code = int(value)
+    except (TypeError, ValueError):
+        code = 0
+    if code == 0:
+        return _('(none)', '(нет)')
+    if code == 86:
+        return _('Keypad minus', 'Минус на цифровой клавиатуре')
+    try:
+        name = nr_keyboard().SDL_GetScancodeName(code)
+        if name:
+            name = name.decode('utf-8')
+            if os.name == 'nt' and name in NR_SCAN_NAMES.values():
+                scan = next(k for k, v in NR_SCAN_NAMES.items() if v == name)
+                vk = ctypes.windll.user32.MapVirtualKeyW(scan, 3)
+                glyph = ctypes.windll.user32.MapVirtualKeyW(vk, 2) & 0x7fffffff
+                if glyph and chr(glyph).isprintable():
+                    return chr(glyph)
+            return name
+    except OSError:
+        pass
+    return _('Key {}', 'Клавиша {}').format(code)
+
+# Slider ranges of the neural pass and of the Ratio resolve. The style parameters are verified at
+# 0..1 and the Ratio shader clamps transfer and colour to 0..1, so a wider slider would do nothing.
+NR_STYLE_MAX = 1.0
+NR_SKIN_MIN = -1.0
+NR_SKIN_MAX = 1.0
+NR_TRANSFER_MAX = 1.0
+NR_COLOUR_MAX = 1.0
+NR_MAX_RATIO = (1.0, 8.0)
+NR_WHITE_POINT = (0.01, 100.0)
 FPS_MODES = [('uncap', ('Unlocked (frame-time patch)', 'Без ограничения (патч)')), ('60', ('60 FPS',)),
              ('90', ('90 FPS',)), ('30', ('30 FPS (as on PS4)', '30 FPS (как на PS4)'))]
 PRESENT_MODES = [('Mailbox', ('Mailbox (low latency, no tearing)', 'Mailbox (без разрывов)')),
@@ -354,8 +554,7 @@ VOICE_LANGUAGES = [('auto', ('As in the game',)), ('eng', ('English',)),
                    ('frf', ('Français',)), ('iti', ('Italiano',)), ('jaj', ('日本語',))]
 DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', ('On', 'Включён')),
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
-READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
-             ('2', ('Precise',))]
+READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('2', ('Precise',))]
 # What the launcher does when the game starts (close_on_play of earlier launchers: 'close').
 ON_PLAY = [('stay', ('Keep it open',)), ('minimize', ('Minimize it',)), ('close', ('Close it',))]
 # BB_LOW_VRAM (run.py's low-VRAM profile): '' leaves it to the card's memory.
@@ -712,6 +911,13 @@ def cache_folder(s):
 def game_environment(s, graphics=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith(('BB_FG_', 'BB_FG401_'))}
     graphics = graphics if graphics is not None else load_ini(s)[0]
+    for ini_k, env_k in (('frame_generation', 'BB_FRAME_GENERATION'),
+                         ('fg_backend', 'BB_FG_BACKEND'),
+                         ('reflex', 'BB_REFLEX'),
+                         ('upscaler', 'BB_UPSCALER'),
+                         ('output_res', 'BB_OUTPUT_RES')):
+        if ini_k in graphics and not env.get(env_k):
+            env[env_k] = str(graphics[ini_k])
     env['BB_GAME_DIR'] = s['game_dir']
     if s['user_dir']:
         env['BB_USER_DIR'] = s['user_dir']
@@ -738,6 +944,9 @@ def game_environment(s, graphics=None):
     for key, name in (('draw_pipe', 'BB_DRAW_PIPE'), ('readbacks', 'BB_READBACKS'), ('frames_ahead', 'BB_FRAMES_AHEAD'),
                       ('low_vram', 'BB_LOW_VRAM')):
         if s[key]:
+            # Off (0) skipped FaceGen copies and exploded the hunter's face.
+            if name == 'BB_READBACKS' and s[key] == '0':
+                continue
             env[name] = s[key]
     for key, name in (('frame_stats', 'BB_FRAME_STATS'), ('gpu_profile', 'BB_GPU_PROFILE'),
                       ('vk_validation', 'BB_VK_VALIDATION')):
@@ -916,6 +1125,18 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         s.configure('Fsr411.TMenubutton', background=CARD, arrowcolor=GOLD, padding=4)
         s.map('Fsr411.TMenubutton', foreground=[('disabled', MUTED)], background=[('active', CARD)])
         s.configure('Unavailable.Fsr411.TMenubutton', foreground=MUTED)
+        # Neural rendering: its model presets, pass buttons and pass tabs.
+        s.configure('NRPreset.Toolbutton', background=CARD, foreground=MUTED, borderwidth=1, padding=(12, 6))
+        s.map('NRPreset.Toolbutton', background=[('disabled', PANEL), ('selected', LINE), ('active', LINE)],
+              foreground=[('disabled', MUTED), ('selected', TEXT), ('active', TEXT)])
+        s.configure('NeuralAdd.TButton', background=LINE, foreground=TEXT)
+        s.configure('NeuralDelete.TButton', background=CARD, foreground=MUTED)
+        s.configure('Neural.TNotebook', background=PANEL, bordercolor=LINE, tabmargins=(0, 0, 0, 0))
+        s.configure('Neural.TNotebook.Tab', background=CARD, foreground=MUTED, bordercolor=LINE,
+                    lightcolor=LINE, darkcolor=LINE, padding=(12, 6))
+        s.map('Neural.TNotebook.Tab', background=[('selected', LINE), ('active', LINE)],
+              foreground=[('selected', TEXT), ('active', TEXT)],
+              lightcolor=[('selected', LINE)], darkcolor=[('selected', LINE)])
 
     # ---- widget helpers ----------------------------------------------------------------------
     def var(self, key, store):
@@ -926,8 +1147,9 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                 value = self.ini.get(key, INI_DEFAULTS[key])
                 if key in INI_FLAGS:
                     v = tk.BooleanVar(value=value == '1')
-                elif key == 'sharpness':
-                    v = tk.DoubleVar(value=float(value or 0.5))
+                elif key in INI_FLOATS:
+                    v = tk.DoubleVar(value=float(value) if str(value).strip() else
+                                     (0.5 if key == 'sharpness' else 1.0))
                 else:
                     v = tk.StringVar(value=value)
             else:
@@ -968,12 +1190,13 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         return box
 
     def fg401_choice(self, parent, width=52):
-        var = self.var('frame_gen', 'ini')
+        """The frame generation backend; ML-FG only where the capability helper found it can run."""
+        var = self.var('fg_backend', 'ini')
         box = self.ttk.Combobox(parent, state='readonly', width=width)
         values = []
         def refresh(*_args):
             ready = bool(self.fg401_support and self.fg401_support.get('supported'))
-            options = [(v,t) for v,t in FRAME_GENERATION if v!='fsr401' or ready]
+            options = [(v,t) for v,t in FG_BACKENDS if v!='fsr401' or ready]
             values[:] = [v for v,t in options]
             box.configure(values=[_(*t) for v,t in options])
             if var.get()=='fsr401' and not ready:
@@ -981,13 +1204,33 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                 box.set(_('ML-FG 4.0.1: checking support…') if self.fg401_support is None else
                         _(bbport_fg401.KEYS[0]))
             else:
-                box.current(values.index(var.get()) if var.get() in values else values.index('off'))
+                box.current(values.index(var.get()) if var.get() in values else 0)
             self.refresh_fg401_status()
         box.bind('<<ComboboxSelected>>', lambda _e: var.set(values[box.current()]))
         var.trace_add('write', refresh)
         self.fg401_refreshers.append(refresh)
         refresh()
-        box.setting_key = 'frame_gen'  # for the search (row() indexes it)
+        box.setting_key = 'fg_backend'  # for the search (row() indexes it)
+        return box
+
+    def fg_mode_choice(self, parent, width=38):
+        """Off/2x/3x/4x as far as the backend goes: DLSS up to 4x, FSR 3.1 and ML-FG 2x."""
+        var, backend = self.var('frame_generation', 'ini'), self.var('fg_backend', 'ini')
+        box = self.ttk.Combobox(parent, state='readonly', width=width)
+        values = []
+        def refresh(*_args):
+            modes = FG_MODES_DLSS if backend.get() == 'dlss' else FG_MODES_FSR
+            values[:] = [v for v, _t in modes]
+            box.configure(values=[_(*t) for _v, t in modes])
+            if var.get() not in values:
+                var.set('2x' if var.get() in ('3x', '4x') else values[0])  # writes: refresh again
+                return
+            box.current(values.index(var.get()))
+        box.bind('<<ComboboxSelected>>', lambda _e: var.set(values[box.current()]))
+        var.trace_add('write', refresh)
+        backend.trace_add('write', refresh)
+        refresh()
+        box.setting_key = 'frame_generation'  # for the search (row() indexes it)
         return box
 
     def refresh_fg401(self):
@@ -997,7 +1240,7 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
 
     def refresh_fg401_status(self):
         if hasattr(self, 'fg401_status'):
-            selected = self.var('frame_gen', 'ini').get() == 'fsr401'
+            selected = self.var('fg_backend', 'ini').get() == 'fsr401'
             # only with ML-FG chosen: on other PCs it is not offered, and its reasons would be noise
             text = bbport_fg401.message(self.fg401_support, _, hdr=bool(self.var('hdr', 'app').get()),
                                         selected=selected) if selected else ''
@@ -1268,6 +1511,18 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                 label.grid_remove() if shown else label.grid()
             link.configure(text=title + ('  ›' if shown else '  ⌄'))
         link.bind('<Button-1>', toggle)
+
+    def scale_row(self, parent, key, title, lo, hi, hint=None):
+        """A slider row for a float ini key (neural rendering), with the value shown next to it."""
+        ttk = self.ttk
+        holder = ttk.Frame(parent)
+        ttk.Scale(holder, from_=lo, to=hi, variable=self.var(key, 'ini'), length=300).pack(side='left')
+        value = ttk.Label(holder, width=6)
+        value.pack(side='left', padx=10)
+        show = lambda *_a: value.configure(text=f'{self.vars[key].get():.2f}')
+        self.vars[key].trace_add('write', show)
+        show()
+        return self.row(parent, title, holder, hint)
 
     def section(self, parent, title, top=18):
         """A heading in Cinzel with a hairline running to the right edge."""
@@ -2044,17 +2299,14 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                  _('1 keeps frame pacing even; more can raise FPS when the graphics card is the limit.',
                    '1 — ровная подача кадров; больше может поднять FPS, если упирается в видеокарту.'))
         self.row(f, _('Presentation', 'Режим показа кадров'), self.choice(f, 'present_mode', 'app', PRESENT_MODES))
-        self.section(f, _('Frame generation', 'Генерация кадров'))
-        self.row(f, _('Frame generation', 'Генерация кадров'),
-                 self.fg401_choice(f),
-                 _('Frames made between two of the game\'s: 60 FPS on screen becomes 120. Needs a display with '
-                   'that refresh rate (120 Hz or more at 60 FPS); it pauses when the display cannot show the extra '
-                   'frames. Adds a little input latency. Menus and movies are not generated. DLSS needs a GeForce '
-                   'RTX 40 or newer, otherwise FSR 3.1 is used.',
-                   'Кадры между двумя кадрами игры: 60 FPS на экране становятся 120. Нужен монитор с такой '
-                   'частотой (120 Гц и выше при 60 FPS); иначе генерация приостанавливается. Немного добавляет '
-                   'задержку ввода. Меню и ролики не генерируются. DLSS нужна GeForce RTX 40 или новее, иначе '
-                   'используется FSR 3.1.'))
+        self.section(f, _('Frame generation & Reflex', 'Генерация кадров и Reflex'))
+        self.row(f, _('Generation backend', 'Бэкенд генерации'), self.fg401_choice(f),
+                 _('Frames made between two of the game\'s: 60 FPS on screen becomes 120 (DLSS on a GeForce RTX 50 '
+                   'up to 240). Needs a display with that refresh rate. Separate from the upscaler. DLSS needs a '
+                   'GeForce RTX 40 or newer; AMD ML-FG a Radeon RX 9000 on Windows 11. Applies on restart.',
+                   'Кадры между двумя кадрами игры: 60 FPS на экране становятся 120 (DLSS на GeForce RTX 50 — до 240). '
+                   'Нужен монитор с такой частотой. Не зависит от апскейлера. DLSS нужна GeForce RTX 40 или новее; '
+                   'AMD ML-FG — Radeon RX 9000 и Windows 11. Применится после перезапуска.'))
         self.fg401_status = self.ttk.Label(f, wraplength=self.px(640), justify='left', style='Muted.TLabel')
         self.fg401_status.grid(row=self.next_row(f), column=1, sticky='w', pady=(4, 0))
         self.fg401_recheck = ttk.Frame(f)
@@ -2062,16 +2314,84 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         ttk.Button(self.fg401_recheck, text=_('Recheck support'), command=self.recheck_fg401).pack(side='left')
         self.refresh_fg401()
         self.var('hdr', 'app').trace_add('write', lambda *_a: self.refresh_fg401_status())
-        self.var('frame_gen', 'ini').trace_add('write', lambda *_a: self.refresh_fg401_status())
-        self.row(f, _('Multiplier', 'Множитель'),
-                 self.choice(f, 'frame_gen_multiplier', 'ini', FRAME_GEN_MULTIPLIERS),
-                 _('FSR 3.1 makes one frame (2×); DLSS on a GeForce RTX 50 up to three (4×).',
-                   'FSR 3.1 делает один кадр (2×); DLSS на GeForce RTX 50 — до трёх (4×).'))
-        self.check(f, 'frame_gen_fit_display', 'ini', _('Fit to display refresh', 'Под частоту монитора'),
-                   _('On: no more frames than the display shows (an uncapped game gets fewer generated frames, and '
-                     'the GPU does less). Off: the multiplier as chosen.',
-                     'Вкл.: не больше кадров, чем показывает монитор (при снятом ограничении FPS генерируется меньше, '
-                     'видеокарта меньше нагружена). Выкл.: множитель как выбран.'))
+        self.var('fg_backend', 'ini').trace_add('write', lambda *_a: self.refresh_fg401_status())
+        self.row(f, _('Frame generation', 'Генерация кадров'), self.fg_mode_choice(f),
+                 _('DLSS supports Off/2x/3x/4x; FSR 3.1 and AMD ML-FG Off/2x. Menus and movies are not generated. '
+                   'Applies on restart.',
+                   'DLSS поддерживает Off/2x/3x/4x; FSR 3.1 и AMD ML-FG — только Off/2x. Меню и ролики не '
+                   'генерируются. Применится после перезапуска.'))
+        self.row(f, _('NVIDIA Reflex', 'NVIDIA Reflex'), self.choice(f, 'reflex', 'ini', REFLEX_MODES),
+                 _('Reduces latency with frame generation. Guarded by runtime capability; applies on restart.',
+                   'Снижает задержку при генерации кадров. Применяется после перезапуска.'))
+
+        self.section(f, _('Neural rendering', 'Нейронный рендеринг'), top=14)
+        self.check(f, 'nr_enabled', 'ini', _('Enable neural rendering (DLSS NR); applies on restart',
+                                             'Включить нейронный рендеринг (DLSS NR); после перезапуска'))
+        model_options = ttk.Frame(f)
+        version = nr_runtime_version()
+        self.nr_preset_buttons = {}
+        for preset, label in NR_PRESETS:
+            button = ttk.Radiobutton(model_options, text=_(*label), value=preset,
+                                     variable=self.var('nr_preset', 'ini'), style='NRPreset.Toolbutton')
+            button.pack(side='left', padx=(0, 16))
+            if preset == '2' and not nr_optimized_supported(version):
+                button.state(['disabled'])
+            self.nr_preset_buttons[preset] = button
+        self.row(f, _('NR preset', 'Пресет NR'), model_options,
+                 _('Automatic: uses the default model in the installed NR DLL. '
+                   'Original: uses the original neural rendering model. '
+                   'Optimized: uses the smaller FP8 model; requires NR 310.9.16.0 or newer.'))
+        self.scale_row(f, 'nr_input_scale', _('NR input scale', 'Масштаб входа NR'), 0.25, 1.0,
+                       _('1.00 uses the full image at the selected execution point; lower '
+                         'values feed it a smaller image and cost less GPU time.',
+                         '1.00 — нейропроход на входном разрешении апскейлера (без даунсэмплинга); ниже — '
+                         'меньше изображение и меньше нагрузка на GPU.'))
+        self.row(f, _('NR resolve method', 'Метод разрешения NR'),
+                 self.choice(f, 'nr_resolve', 'ini', NR_RESOLVE),
+                 _('Auto: 1:1 at a 100% input scale, residual below it. Residual: Magpie + Lanczos3, low '
+                   'detail. Ratio: the luma-ratio resolve with the advanced controls below.'))
+        self.check(f, 'nr_ui_correction', 'ini', _('NR UI correction', 'Коррекция интерфейса NR'),
+                   _('Preserves the original HUD during Present passes. Frame generation always keeps HUD protection.'))
+        hotkey = ttk.Frame(f)
+        self.nr_hotkey_label = ttk.Label(hotkey, width=18, style='Muted.TLabel')
+        self.nr_hotkey_label.pack(side='left')
+        self.nr_hotkey_button = ttk.Button(hotkey, text=_('Set…', 'Назначить…'),
+                                           command=self.start_nr_hotkey_capture)
+        self.nr_hotkey_button.pack(side='left', padx=(10, 4))
+        ttk.Button(hotkey, text=_('Clear', 'Сбросить'), command=self.clear_nr_hotkey).pack(side='left')
+        self.var('nr_hotkey', 'ini').trace_add('write', lambda *_a: self.refresh_nr_hotkey())
+        self.refresh_nr_hotkey()
+        self.row(f, _('NR toggle hotkey', 'Горячая клавиша NR'), hotkey, key='nr_hotkey')
+        # The pass chain: one tab per active pass, as in the reference overlay. Adding and deleting
+        # reshuffles the nr_passN_* values; the widgets read the shared ini variables, so a rebuilt
+        # tab shows the moved values.
+        holder = ttk.Frame(f)
+        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we', pady=(8, 0))
+        self.index_entry(holder, _('Neural rendering passes'),
+                         _('One tab per pass; add or delete passes below the tabs.'), 'nr_passes')
+        self.nr_tabs = ttk.Notebook(holder, style='Neural.TNotebook')
+        self.nr_tabs.pack(side='top', fill='x')
+        buttons = ttk.Frame(holder)
+        buttons.pack(side='top', anchor='w', pady=(6, 0))
+        self.nr_add_button = ttk.Button(buttons, text=_('+ Add pass'), style='NeuralAdd.TButton',
+                                       command=self.nr_add_pass)
+        self.nr_add_button.pack(side='left')
+        self.nr_delete_button = ttk.Button(buttons, text=_('Delete current pass'), style='NeuralDelete.TButton',
+                                           command=self.nr_delete_pass)
+        self.nr_delete_button.pack(side='left', padx=(8, 0))
+        self.nr_count_label = ttk.Label(buttons, text='', style='Muted.TLabel')
+        self.nr_count_label.pack(side='left', padx=(12, 0))
+        self.nr_rebuild_tabs()
+        self.note(f, _('Passes run in order within their stage; more passes cost more GPU time. A disabled '
+                       'pass keeps its settings and is skipped by the game.',
+                       'Проходы выполняются по порядку внутри своей стадии; больше проходов — больше '
+                       'нагрузка на GPU. Отключённый проход сохраняет настройки и пропускается игрой.'), top=6)
+        self.scale_row(f, 'nr_transfer_strength', _('Ratio transfer strength'), 0.0, NR_TRANSFER_MAX)
+        self.scale_row(f, 'nr_colour_strength', _('Ratio colour strength'), 0.0, NR_COLOUR_MAX)
+        self.scale_row(f, 'nr_max_ratio', _('Ratio maximum'), *NR_MAX_RATIO)
+        self.scale_row(f, 'nr_white_point', _('Ratio white point'), *NR_WHITE_POINT)
+        self.note(f, _('The four Ratio values apply to the Ratio resolve method only.',
+                       'Четыре значения Ratio действуют только для метода Ratio.'), top=6)
         self.section(f, _('FSR 4 assets', 'Ассеты FSR 4'))
         self.fsr4_label = ttk.Label(f, text='', wraplength=self.px(640), justify='left', style='Muted.TLabel')
         self.fsr4_label.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w')
@@ -2120,6 +2440,134 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                               font=(theme.BODY_MEDIUM, 9))
         label.pack(side='left', padx=(8, 0))
         label.bind('<Button-1>', lambda _e: command() if command else self.show(page))
+
+    def refresh_nr_hotkey(self):
+        self.nr_hotkey_label.configure(text=nr_hotkey_name(self.var('nr_hotkey', 'ini').get()))
+
+    def clear_nr_hotkey(self):
+        cancel = getattr(self, '_nr_capture_finish', None)
+        if cancel:
+            cancel()
+        self.var('nr_hotkey', 'ini').set('0')
+
+    def start_nr_hotkey_capture(self):
+        """Controls-style key capture. Escape cancels; Clear disables the shortcut."""
+        self.nr_hotkey_label.configure(text=_('Press a key…', 'Нажмите клавишу…'))
+        self.nr_hotkey_button.configure(state='disabled')
+        self.root.grab_set()
+        self.root.focus_set()
+
+        def finish():
+            self._nr_capture_finish = None
+            self.root.unbind_all('<KeyPress>')
+            self.root.grab_release()
+            self.nr_hotkey_button.configure(state='normal')
+            self.refresh_nr_hotkey()
+
+        def on_key(event):
+            if event.keysym == 'Escape':
+                finish()
+                return 'break'
+            reserved = reserved_keys(getattr(self, 'remap_toggle_key', 'f7'),
+                                     getattr(self, 'remap_reload_key', 'f8'))
+            if keysym_to_name(event.keysym) in reserved:
+                self.nr_hotkey_label.configure(text=_('Reserved; choose another key',
+                                                      'Зарезервировано; выберите другую клавишу'))
+                return 'break'
+            try:
+                code = nr_scancode(event.keysym, event.keycode)
+            except OSError:
+                code = 0
+            if not code:
+                self.nr_hotkey_label.configure(text=_('Choose another key…', 'Выберите другую клавишу…'))
+                return 'break'
+            self.var('nr_hotkey', 'ini').set(str(code))
+            finish()
+            return 'break'
+
+        self._nr_capture_finish = finish
+        self.root.bind_all('<KeyPress>', on_key)
+
+    def nr_pass_count(self):
+        """The active number of passes (1..NR_PASS_COUNT), from the shared nr_passes setting."""
+        try:
+            count = int(self.var('nr_passes', 'ini').get())
+        except (TypeError, ValueError):
+            count = 1
+        return max(1, min(NR_PASS_COUNT, count))
+
+    def nr_pass_values(self):
+        """The text of every pass key and of the pass count: the edited variable when it exists,
+        otherwise the ini value (or its default)."""
+        values = {}
+        for i in range(1, NR_PASS_COUNT + 1):
+            for field, _default in NR_PASS_DEFAULTS:
+                key = f'nr_pass{i}_{field}'
+                var = self.vars.get(key)
+                raw = var.get() if var is not None else self.ini.get(key, INI_DEFAULTS[key])
+                values[key] = nr_value_text(key, raw)
+        values['nr_passes'] = str(self.nr_pass_count())
+        return values
+
+    def nr_apply_values(self, values):
+        """Writes moved pass values back into the Tk variables and the ini mirror."""
+        for key, value in values.items():
+            self.ini[key] = value
+            var = self.vars.get(key)
+            if var is None:
+                continue
+            if key in NR_FLAGS:
+                var.set(value == '1')
+            elif key in NR_FLOATS:
+                var.set(float(value))
+            else:
+                var.set(value)
+
+    def nr_rebuild_tabs(self, select=None):
+        """One PASS tab per active pass. The widgets bind to the shared ini variables, so a rebuilt
+        tab shows the values the add/delete shift left there."""
+        for tab in self.nr_tabs.tabs():
+            self.nr_tabs.forget(tab)
+        count = self.nr_pass_count()
+        for i in range(1, count + 1):
+            frame = self.ttk.Frame(self.nr_tabs, padding=(10, 8, 10, 10))
+            self.nr_tabs.add(frame, text=_('Pass {}').format(i))
+            self.check(frame, f'nr_pass{i}_enabled', 'ini', _('Enabled'))
+            self.row(frame, _('Execution point'),
+                     self.choice(frame, f'nr_pass{i}_stage', 'ini', NR_STAGES),
+                     _('Before upscaling, immediately after upscaling, or before present.'))
+            self.row(frame, _('Style'), self.choice(frame, f'nr_pass{i}_style', 'ini', NR_STYLES))
+            self.scale_row(frame, f'nr_pass{i}_intensity', _('Intensity'), 0.0, NR_STYLE_MAX)
+            self.scale_row(frame, f'nr_pass{i}_structure', _('Structure'), 0.0, NR_STYLE_MAX)
+            self.scale_row(frame, f'nr_pass{i}_tone', _('Tone'), 0.0, NR_STYLE_MAX)
+            self.check(frame, f'nr_pass{i}_auto_skin', 'ini', _('Automatic skin mask'))
+            self.scale_row(frame, f'nr_pass{i}_skin_structure', _('Skin structure'), NR_SKIN_MIN, NR_SKIN_MAX,
+                           _('-1 follows the local structure of the skin region instead of the mask\'s own '
+                             'adjustment.'))
+        if select is not None and 0 <= select < count:
+            self.nr_tabs.select(select)
+        self.nr_add_button.state(['disabled'] if count >= NR_PASS_COUNT else ['!disabled'])
+        self.nr_delete_button.state(['disabled'] if count <= 1 else ['!disabled'])
+        self.nr_count_label.configure(text=_('{} of {} passes').format(count, NR_PASS_COUNT))
+
+    def nr_add_pass(self):
+        """+ Add PASS: one more tab; the new slot starts from its defaults."""
+        count = self.nr_pass_count()
+        if count >= NR_PASS_COUNT:
+            return
+        self.nr_apply_values(nr_pass_add(self.nr_pass_values(), count))
+        self.nr_rebuild_tabs(select=count)
+
+    def nr_delete_pass(self):
+        """Delete current PASS: the later passes move up and keep their settings, the freed last
+        slot returns to its defaults."""
+        count = self.nr_pass_count()
+        if count <= 1:
+            return
+        current = self.nr_tabs.index(self.nr_tabs.select()) if self.nr_tabs.select() else None
+        removed = max(1, min(count, (current if isinstance(current, int) else 0) + 1))
+        self.nr_apply_values(nr_pass_delete(self.nr_pass_values(), removed, count))
+        self.nr_rebuild_tabs(select=min(removed, count - 1) - 1)
 
     def build_game(self):
         """Expert: the game folder and the DLC folder (set once, usually by the setup guide)."""
@@ -3291,8 +3739,8 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
-                 _('How exactly data the GPU writes is copied back for the game.',
-                   'Насколько точно данные, записанные GPU, возвращаются игре.'))
+                 _('Relaxed copies FaceGen vertices back. Off exploded the hunter face and is ignored.',
+                   'Relaxed копирует вершины FaceGen обратно. Off взрывал лицо охотника и игнорируется.'))
         self.row(f, _('Low-VRAM profile', 'Профиль для малого объёма видеопамяти'),
                  self.choice(f, 'low_vram', 'app', LOW_VRAM),
                  _('A larger texture budget and, at 1080p with an upscaler, a smaller scene from the start '
@@ -3554,11 +4002,13 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         upscaler = dict(UPSCALERS).get(self.var('upscaler', 'ini').get(), ('?',))[0].split(' (')[0]
         if self.var('upscaler', 'ini').get() == 'fsr411':
             upscaler += ' · ' + ('DX12' if self.var('fsr411_backend', 'ini').get() == 'dx12' else 'fsr4vk')
+        fg_val = self.var('frame_generation', 'ini').get()
+        fg_str = f' · FG {fg_val.upper()}' if fg_val and fg_val != 'off' else ''
         output = self.var('output_res', 'ini').get().replace('x', ' × ')
         online = _('Online') if self.var('online', 'app').get() else _('Offline')
         if self.var('online', 'app').get() and self.var('online_pool', 'app').get() == 'huntersdream':
             online = _("Online (The Hunter's Dream)")
-        return f'{_(*fps)}   ·   {upscaler}   ·   {output}   ·   {online}'
+        return f'{_(*fps)}   ·   {upscaler}{fg_str}   ·   {output}   ·   {online}'
 
     def detect_gpu(self):
         exe = PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe'
@@ -3837,7 +4287,7 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
     @staticmethod
     def ini_text(key, value):
         return ('1' if value else '0') if key in INI_FLAGS else \
-            f'{float(value):.2f}' if key == 'sharpness' else str(value)
+            f'{float(value):.2f}' if key in INI_FLOATS else str(value)
 
     def sync_ini(self):
         """Takes what the in-game menu wrote to bbport.ini while the launcher was open, except where

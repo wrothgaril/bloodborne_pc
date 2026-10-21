@@ -83,10 +83,14 @@ if [[ -n ${scaled_output:-} ]]; then
     live=${BB_LIVE_RES:-}
     # Bash builtins only: the AppImage's PATH has no sed/grep (a missing one ended run.sh silently).
     dof=1
-    if [[ -z $live && -f $BB_CONFIG ]]; then
+    if [[ -f $BB_CONFIG ]]; then
         while IFS= read -r line || [[ -n $line ]]; do
-            [[ $line =~ ^live_resolution=([01]|auto)$ ]] && live=${BASH_REMATCH[1]}
-            [[ $line =~ ^effect_dof=([01])$ ]] && dof=${BASH_REMATCH[1]}
+            if [[ -z ${BB_LIVE_RES:-} && $line =~ ^live_resolution=([01]|auto)$ ]]; then
+                live=${BASH_REMATCH[1]}
+            fi
+            if [[ $line =~ ^effect_dof=([01])$ ]]; then
+                dof=${BASH_REMATCH[1]}
+            fi
         done < "$BB_CONFIG"
     fi
     # auto keeps the startup patch above 1080p with depth of field on: in the live path the

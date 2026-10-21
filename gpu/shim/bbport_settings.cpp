@@ -1,14 +1,55 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_settings.h"
+#include "bbport_neural_settings.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
 namespace BbSettings {
+const char* FgBackendName(int backend) {
+    static constexpr const char* names[FgBackendCount] = {"dlss", "fsr", "fsr401"};
+    return names[std::clamp(backend, 0, FgBackendCount - 1)];
+}
+
+const char* ReflexModeName(int mode) {
+    static constexpr const char* names[ReflexModeCount] = {"off", "on", "boost"};
+    return names[std::clamp(mode, 0, ReflexModeCount - 1)];
+}
+
+const char* FrameGenName(int factor) {
+    switch (factor) {
+    case 2: return "2x";
+    case 3: return "3x";
+    case 4: return "4x";
+    default: return "off";
+    }
+}
+
+int ParseFrameGen(const std::string& value) {
+    if (value == "2x" || value == "2") return 2;
+    if (value == "3x" || value == "3") return 3;
+    if (value == "4x" || value == "4") return 4;
+    return 0; // default/off
+}
+
+int ParseFgBackend(const std::string& value) {
+    if (value == "fsr" || value == "1") return FgFsr;
+    if (value == "fsr401" || value == "2") return FgFsr401;
+    return FgDlss; // default/0
+}
+
+int ParseReflex(const std::string& value) {
+    if (value == "off" || value == "0") return ReflexOff;
+    if (value == "boost" || value == "2") return ReflexBoost;
+    return ReflexOn; // default/1/"on"
+}
+
 
 namespace {
 
@@ -30,16 +71,20 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.upscaler = u;
             }
         }
-    } else if (key == "frame_gen") {
-        for (int g = 0; g < FrameGenCount; ++g) {
-            if (value == FrameGenName(g)) {
-                v.frame_gen = g;
-            }
+    } else if (key == "frame_generation") {
+        int fg = ParseFrameGen(value);
+        if (v.fg_backend != FgDlss && fg > 2) {
+            fg = 2; // FSR 3.1 and ML-FG support Off / 2x only
         }
-    } else if (key == "frame_gen_multiplier") {
-        v.frame_gen_multiplier = std::clamp(i, 2, 4);
-    } else if (key == "frame_gen_fit_display") {
-        v.frame_gen_fit_display = i != 0;
+        v.frame_generation = fg;
+    } else if (key == "fg_backend") {
+        int b = ParseFgBackend(value);
+        v.fg_backend = b;
+        if (b != FgDlss && v.frame_generation > 2) {
+            v.frame_generation = 2; // clamp when switching to FSR 3.1 or ML-FG
+        }
+    } else if (key == "reflex") {
+        v.reflex = ParseReflex(value);
     } else if (key == "preset") {
         v.preset = std::clamp(i, 0, PresetCount - 1);
     } else if (key == "sharpen") {
@@ -87,10 +132,26 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "fov") {
         v.fov = std::clamp(i, FovMin, FovMax);
     } else if (key == "output_res") {
-        for (int r = 0; r < OutputCount; ++r) {
+        for (int r = 0; r < OutputCustom; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
                 v.output_res = r;
+                return;
             }
+        }
+        const auto separator = value.find('x');
+        if (separator == std::string::npos) return;
+        int w = 0, h = 0;
+        const char* begin = value.data();
+        const char* split = begin + separator;
+        const char* end = begin + value.size();
+        const auto width = std::from_chars(begin, split, w);
+        const auto height = std::from_chars(split + 1, end, h);
+        if (width.ec == std::errc{} && width.ptr == split &&
+            height.ec == std::errc{} && height.ptr == end &&
+            w >= 256 && w <= 7680 && h >= 144 && h <= 4320 && !(w & 1) && !(h & 1)) {
+            OutputWidths[OutputCustom] = w;
+            OutputHeights[OutputCustom] = h;
+            v.output_res = OutputCustom;
         }
     } else {
         for (int e = 0; e < EffectCount; ++e) {
@@ -110,8 +171,10 @@ Values& Get() {
 
 void Load() {
     auto& v = Get();
-    v.fg401_fallback = -1;
-    v.frame_gen_hdr = false;
+    static bool initialized = false;
+    v.frame_generation = 0;
+    v.fg_backend = FgDlss;
+    v.reflex = ReflexOn;
     v.frame_gen_problem = nullptr;
     v.fg401_problem = nullptr;
     v.fsr411_backend = Fsr411Vulkan;
@@ -133,6 +196,8 @@ void Load() {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
+    // Neural rendering keeps its own nr_* keys in the same file (bbport_neural_settings.cpp).
+    BbNeural::Load(Path());
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
         v.upscaler = UpscalerOff;
@@ -140,13 +205,21 @@ void Load() {
             if (std::strcmp(env, UpscalerName(u)) == 0) v.upscaler = u;
         }
     }
+    if (const char* env = std::getenv("BB_FG_BACKEND")) {
+        Set(v, "fg_backend", env);
+    }
+    if (const char* env = std::getenv("BB_FRAME_GENERATION")) {
+        Set(v, "frame_generation", env);
+    }
+    if (const char* env = std::getenv("BB_REFLEX")) {
+        Set(v, "reflex", env);
+    }
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
-        {"BB_FRAME_GEN", "frame_gen"},              {"BB_FRAME_GEN_MULTIPLIER", "frame_gen_multiplier"},
-        {"BB_FRAME_GEN_FIT_DISPLAY", "frame_gen_fit_display"},
+        {"BB_OUTPUT_RES", "output_res"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -166,6 +239,12 @@ void Load() {
         if (const char* cache = std::getenv("BB_OBJECT_MOTION_CACHE")) {
             Set(v, "object_motion_cache", cache);
         }
+    }
+    if (!initialized) {
+        v.startup_frame_generation = v.frame_generation;
+        v.startup_fg_backend = v.fg_backend;
+        v.startup_reflex = v.reflex;
+        initialized = true;
     }
     v.startup_preset = v.preset;
     v.startup_upscaler = v.upscaler;
@@ -212,31 +291,6 @@ void ConfigureFg401Support(bool available, const char* problem) {
     v.fg401_problem = available || kept.empty() ? nullptr : kept.c_str();
 }
 
-void SelectFrameGen(int provider) {
-    auto& v = Get();
-    v.frame_gen = provider;
-    v.fg401_fallback = -1;
-    v.frame_gen_problem = nullptr;
-}
-
-void FrameGenFailure(int provider, const char* problem) {
-    auto& v = Get();
-    if (provider == FrameGenFsr401) {
-        ConfigureFg401Support(false, problem);
-        v.fg401_fallback = FrameGenFsr3;
-        v.frame_gen_problem = "ML-FG failed; FSR 3.1 FG active.";
-    } else if (v.frame_gen == FrameGenFsr401) {
-        v.fg401_fallback = FrameGenOff;
-        v.frame_gen_problem = "Frame generation unavailable; FG off.";
-    } else {
-        // Existing DLSS / FSR 3.1 fallback policy.
-        static std::string kept;
-        kept = problem ? problem : "Frame generation failed.";
-        v.frame_gen_problem = kept.c_str();
-        v.frame_gen = provider == FrameGenDlss ? FrameGenFsr3 : FrameGenOff;
-    }
-}
-
 void ConfigureDlssSupport(bool available, const char* problem) {
     auto& v = Get();
     v.dlss_supported = available;
@@ -250,6 +304,21 @@ void ConfigureDlssSupport(bool available, const char* problem) {
     }
 }
 
+void ConfigureReflexSupport(bool supported) {
+    auto& v = Get();
+    v.reflex_supported = supported;
+    if (!supported && v.reflex != ReflexOff) {
+        v.reflex = ReflexOff;
+    }
+}
+
+bool FrameGenNeedsRestart() {
+    const auto& v = Get();
+    return v.frame_generation != v.startup_frame_generation ||
+           v.fg_backend != v.startup_fg_backend ||
+           v.reflex != v.startup_reflex;
+}
+
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
     return size && size[0];
@@ -261,16 +330,27 @@ int RenderPreset() {
         v.upscaler == UpscalerTaa ? NativeAA : v.preset.load();
 }
 
+bool AspectNeedsRestart() {
+    const auto& v = Get();
+    const int a = v.output_res, b = v.startup_output_res;
+    return int64_t(OutputWidths[a]) * OutputHeights[b] !=
+           int64_t(OutputWidths[b]) * OutputHeights[a];
+}
+
 bool ResolutionNeedsRestart() {
     const auto& v = Get();
-    // TAA needs the live path (native guest targets): run.sh selects it on restart. Ultrawide
-    // outputs patch the camera and HUD at startup.
-    if (Ultrawide(v.output_res) != Ultrawide(v.startup_output_res)) return true;
-    if (Ultrawide(v.output_res) && v.hud_position != v.startup_hud_position) return true;
-    return FixedRenderSession() &&
+    // Wide outputs patch the camera and the HUD layer (patches.py, hud_layout.py) at startup, and
+    // two wide outputs can share an aspect ratio, so compare the outputs themselves.
+    if ((Ultrawide(v.output_res) || Ultrawide(v.startup_output_res)) &&
+        (v.output_res != v.startup_output_res || v.hud_position != v.startup_hud_position)) {
+        return true;
+    }
+    // TAA needs the live path (native guest targets): run.sh selects it on restart.
+    // An aspect change needs the camera and UI viewport patches rebuilt on restart.
+    return AspectNeedsRestart() || (FixedRenderSession() &&
         (v.preset != v.startup_preset || v.output_res != v.startup_output_res ||
          (v.upscaler == UpscalerOff) != (v.startup_upscaler == UpscalerOff) ||
-         (v.upscaler == UpscalerTaa) != (v.startup_upscaler == UpscalerTaa));
+         (v.upscaler == UpscalerTaa) != (v.startup_upscaler == UpscalerTaa)));
 }
 
 bool FsrSettingsNeedRestart() {
@@ -292,10 +372,13 @@ void Save() {
     }
     std::fprintf(file,
                  "# bbport settings (in-game menu: Insert / L3+R3)\n"
-                 "upscaler=%s\npreset=%d\nsharpen=%d\nsharpness=%.2f\njitter=%d\n"
+                 "upscaler=%s\nframe_generation=%s\nfg_backend=%s\nreflex=%s\n"
+                 "preset=%d\nsharpen=%d\nsharpness=%.2f\njitter=%d\n"
                  "reactive=%d\nobject_motion=%d\nreactive_scale=%.2f\nreactive_threshold=%.2f\nreactive_max=%.2f\n"
                  "debug_view=%d\nshow_fps=%d\nfsr4_auto_exposure=%d\nfsr4_invert_jitter=%d\n",
-                 UpscalerName(v.upscaler), v.preset.load(), int(v.sharpen.load()),
+                 UpscalerName(v.upscaler), FrameGenName(v.frame_generation.load()),
+                 FgBackendName(v.fg_backend.load()), ReflexModeName(v.reflex.load()),
+                 v.preset.load(), int(v.sharpen.load()),
                  v.sharpness.load(), int(v.jitter.load()), int(v.reactive.load()),
                  int(v.object_motion.load()),
                  v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
@@ -308,9 +391,6 @@ void Save() {
     for (int e = 0; e < EffectCount; ++e) {
         std::fprintf(file, "%s=%d\n", Effects[e].key, int(v.effects[e].load()));
     }
-    std::fprintf(file, "frame_gen=%s\nframe_gen_multiplier=%d\nframe_gen_fit_display=%d\n",
-                 FrameGenName(v.frame_gen), v.frame_gen_multiplier.load(),
-                 int(v.frame_gen_fit_display.load()));
     std::fprintf(file, "model_lod=%d\noutput_res=%dx%d\n", v.model_lod.load(),
                  OutputWidths[v.output_res], OutputHeights[v.output_res]);
     std::fprintf(file, "mute_unfocused=%d\n", int(v.mute_unfocused.load()));
@@ -323,6 +403,8 @@ void Save() {
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
+    // The neural-rendering keys of the same file: Save() rewrote it, so append them again.
+    BbNeural::Append(file);
     std::fclose(file);
 }
 
@@ -335,11 +417,6 @@ const char* PresetName(int preset) {
     static constexpr const char* names[PresetCount] = {"Native AA", "Quality", "Balanced",
                                                        "Performance", "Ultra Performance"};
     return names[std::clamp(preset, 0, PresetCount - 1)];
-}
-
-const char* FrameGenName(int frame_gen) {
-    static constexpr const char* names[FrameGenCount] = {"off", "fsr3", "dlss", "fsr401"};
-    return names[std::clamp(frame_gen, 0, FrameGenCount - 1)];
 }
 
 const char* UpscalerName(int upscaler) {

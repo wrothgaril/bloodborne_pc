@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_map>
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -20,6 +21,7 @@
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "bbport_threads.h"
 
 namespace Vulkan {
@@ -191,6 +193,11 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
     return chunk;
 }
 
+namespace {
+void NoteCopySite(const std::source_location& where, u64 ns);
+u64 NsSince(std::chrono::steady_clock::time_point start);
+} // namespace
+
 void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
     if (!IsRecordingDeferred()) {
         WaitHostCopies();
@@ -208,28 +215,51 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
     KickRecording(true);
 }
 
-void Scheduler::WaitDeferredSignals() {
-    const u64 issued = deferred_signals_issued.load(std::memory_order_relaxed);
-    if (deferred_signals_done->load(std::memory_order_acquire) >= issued ||
+void Scheduler::WaitDeferredSignals(std::source_location where) {
+    WaitDeferredSignalsUpTo(deferred_signals_issued.load(std::memory_order_relaxed), where);
+}
+
+void Scheduler::WaitDeferredSignalsUpTo(u64 issued, std::source_location where) {
+    if (issued == 0 || deferred_signals_done->load(std::memory_order_acquire) >= issued ||
         BbToggle::Disabled(BbToggle::OrderedGuestWrites)) {
         return;
     }
-    BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
-    KickRecording(true);
-    while (deferred_signals_done->load(std::memory_order_acquire) < issued) {
-        // Helps the copy threads the signals wait for.
-        BbCopy::WaitAsync();
-        std::this_thread::yield();
+    static const bool ordered = [] {
+        const char* env = std::getenv("BB_FENCE_ORDER");
+        return !(env && env[0] == '0');
+    }();
+    if (!ordered) {
+        issued = deferred_signals_issued.load(std::memory_order_relaxed);
+    }
+    const auto start = BbStats::enabled ? std::chrono::steady_clock::now()
+                                        : std::chrono::steady_clock::time_point{};
+    {
+        BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
+        KickRecording(true);
+        while (deferred_signals_done->load(std::memory_order_acquire) < issued) {
+            BbCopy::WaitAsync();
+            std::this_thread::yield();
+        }
+    }
+    if (BbStats::enabled) {
+        NoteCopySite(where, NsSince(start));
     }
 }
 
-void Scheduler::WaitHostCopies() {
+void Scheduler::WaitHostCopies(std::source_location where) {
     if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-        BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
-        BbStats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
-        KickRecording(true);
-        while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-            std::this_thread::yield();
+        const auto start = BbStats::enabled ? std::chrono::steady_clock::now()
+                                            : std::chrono::steady_clock::time_point{};
+        {
+            BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
+            BbStats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
+            KickRecording(true);
+            while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+                std::this_thread::yield();
+            }
+        }
+        if (BbStats::enabled) {
+            NoteCopySite(where, NsSince(start));
         }
     }
     BbStats::WaitTimer timer{BbStats::copy_threads_wait_ns};
@@ -338,29 +368,112 @@ void Scheduler::Flush() {
     Flush(info);
 }
 
-void Scheduler::Finish() {
+void Scheduler::Finish(std::source_location where) {
     // When finishing, we need to wait for the submission to have executed on the device.
     const u64 presubmit_tick = CurrentTick();
     SubmitInfo info{};
     SubmitExecution(info);
-    Wait(presubmit_tick);
+    Wait(presubmit_tick, where);
 }
 
-void Scheduler::WaitSubmitted() {
+void Scheduler::WaitSubmitted(std::source_location where) {
     const u64 tick = CurrentTick();
     if (tick > 1) {
-        Wait(tick - 1);
+        Wait(tick - 1, where);
     }
 }
 
-void Scheduler::Wait(u64 tick) {
+namespace {
+/// bbport: GPU waits per call site (BB_FRAME_STATS), only those that blocked.
+struct WaitSite {
+    const char* function = nullptr;
+    u32 line = 0;
+    u64 ns = 0;
+    u64 count = 0;
+};
+using WaitSites = std::array<WaitSite, 48>;
+std::mutex wait_sites_mutex;
+WaitSites wait_sites{};
+/// Waits for guest memory copies and deferred fences (the "host copies" share of frame stats).
+WaitSites copy_sites{};
+
+void NoteSite(WaitSites& sites, const std::source_location& where, u64 ns) {
+    std::scoped_lock lk{wait_sites_mutex};
+    for (auto& site : sites) {
+        if (!site.function) {
+            site.function = where.function_name();
+            site.line = where.line();
+        }
+        if (site.line == where.line() && site.function == where.function_name()) {
+            site.ns += ns;
+            ++site.count;
+            return;
+        }
+    }
+}
+
+void NoteWaitSite(const std::source_location& where, u64 ns) {
+    NoteSite(wait_sites, where, ns);
+}
+
+void NoteCopySite(const std::source_location& where, u64 ns) {
+    NoteSite(copy_sites, where, ns);
+}
+
+u64 NsSince(std::chrono::steady_clock::time_point start) {
+    return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now() - start)
+                   .count());
+}
+
+void PrintSites(const char* title, WaitSites& table, double window_seconds) {
+    WaitSites sites;
+    {
+        std::scoped_lock lk{wait_sites_mutex};
+        sites = table;
+        table = {};
+    }
+    std::sort(sites.begin(), sites.end(),
+              [](const WaitSite& a, const WaitSite& b) { return a.ns > b.ns; });
+    if (!sites[0].function) {
+        return;
+    }
+    std::printf("%s:", title);
+    for (u32 i = 0; i < 5 && sites[i].function; ++i) {
+        std::printf(" %s:%u %.1f%% (%llu)%s", sites[i].function, sites[i].line,
+                    sites[i].ns / (window_seconds * 1e7),
+                    static_cast<unsigned long long>(sites[i].count),
+                    i + 1 < 5 && sites[i + 1].function ? ";" : "");
+    }
+    std::printf("\n");
+}
+} // namespace
+
+void Scheduler::Wait(u64 tick, std::source_location where) {
     if (tick >= work_semaphore.CurrentTick()) {
         // Make sure we are not waiting for the current tick without signalling
         SubmitInfo info{};
         Flush(info);
     }
-    BbStats::WaitTimer timer{BbStats::tick_wait_ns};
+    if (!BbStats::enabled || work_semaphore.IsFree(tick)) {
+        BbStats::WaitTimer timer{BbStats::tick_wait_ns};
+        work_semaphore.Wait(tick);
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
     work_semaphore.Wait(tick);
+    const u64 ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now() - start)
+                           .count());
+    BbStats::tick_wait_ns.fetch_add(ns, std::memory_order_relaxed);
+    if (ns > 20'000) {
+        NoteWaitSite(where, ns);
+    }
+}
+
+void Scheduler::PrintWaitSites(double window_seconds) {
+    PrintSites("GPU waits", wait_sites, window_seconds);
+    PrintSites("Host copy waits", copy_sites, window_seconds);
 }
 
 void Scheduler::PopPendingOperations() {
@@ -387,7 +500,40 @@ void Scheduler::PopPendingOperations() {
     }
 }
 
+void Scheduler::SetSubmissionFrameId(u64 frame_id) {
+    // The guest can submit the next source frame's graphics work before the previous source's
+    // flip has been processed (no FIFO ordering is guaranteed across the submit and flip
+    // paths), so the buffer open here can still hold the previous source's unflushed commands.
+    // Submit them under the identity they were recorded with before adopting the new one;
+    // otherwise that work would be attributed to this frame. The caller
+    // (Rasterizer::SetSubmissionFrameId) has already drained the draw-recording thread, so
+    // submitting here cannot race a draw into a submitted buffer.
+    //
+    // Only flush when something was actually recorded into the current buffer. When the natural
+    // PrepareFrame boundary already flushed it, or a submission recorded nothing, an extra
+    // empty submission would overwrite the driver's latency window with tiny work and add
+    // markers for no reason. When the identity is unchanged (several submissions inside one
+    // source frame) there is nothing to split and the buffer keeps accumulating.
+    if (has_recorded_work && recording_id.RecordingId() != frame_id) {
+        Flush();
+    }
+    // Apply immediately: the very next allocation records under the accepted identity, not
+    // the stale one, and every later allocation in this submission reuses it because
+    // AllocateWorkerCommandBuffers no longer clears the captured value.
+    recording_id.BeginSubmission(frame_id);
+    Reflex::SetRecordingFrameId(recording_id.RecordingId());
+}
+
 void Scheduler::AllocateWorkerCommandBuffers() {
+    // bbport: while a top-level graphics submission owns the recording identity, every
+    // command buffer allocated for it keeps that captured identity. Only a scheduler that
+    // never captured one (presenter blits, compute, initialization) reads the live counter.
+    // The value is deliberately NOT cleared here: clearing it after the first allocation made
+    // later flushes inside the same submission fall back to the late-global counter.
+    recording_id.Allocate(Reflex::CurrentSimFrameId());
+    Reflex::SetRecordingFrameId(recording_id.RecordingId());
+    has_recorded_work = false;
+
     const vk::CommandBufferBeginInfo begin_info = {
         .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
     };
@@ -404,6 +550,7 @@ void Scheduler::AllocateWorkerCommandBuffers() {
         static const auto scope_loc =
             GPU_SCOPE_LOCATION("Guest Frame", MarkersPalette::GpuMarkerColor);
         new (profiler_scope) tracy::VkCtxScope{profiler_ctx, &scope_loc, current_cmdbuf, true};
+        has_recorded_work = true;
     }
 #endif
 }
@@ -450,6 +597,7 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         pending_external_wait = nullptr;
     }
 
+
     const vk::TimelineSemaphoreSubmitInfo timeline_si = {
         .waitSemaphoreValueCount = info.num_wait_semas,
         .pWaitSemaphoreValues = info.wait_ticks.data(),
@@ -457,7 +605,9 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         .pSignalSemaphoreValues = info.signal_ticks.data(),
     };
 
-    const vk::SubmitInfo submit_info = {
+    VkLatencySubmissionPresentIdNV attribution{};
+    u64 submit_reflex_id = recording_id.RecordingId();
+    vk::SubmitInfo submit_info = {
         .pNext = &timeline_si,
         .waitSemaphoreCount = info.num_wait_semas,
         .pWaitSemaphores = info.wait_semas.data(),
@@ -468,10 +618,34 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         .pSignalSemaphores = info.signal_semas.data(),
     };
 
+    const auto queue = use_present_queue ? instance.GetPresentQueue() : execution_queue;
+    const bool trace_reflex = submit_reflex_id && instance.IsReflexSupported() &&
+        !(Reflex::UsesMarkerAttribution() && queue != instance.GetGraphicsQueue());
+    if (trace_reflex) {
+        // Presentation blits share the graphics queue. Their regular frame ID
+        // would replace game-render attribution with a tiny copy submission.
+        const auto attributed = Reflex::PrepareSubmit(queue,
+            is_out_of_band ? 0 : submit_reflex_id, submit_info, attribution);
+        if (!is_out_of_band) submit_reflex_id = attributed;
+        if (is_out_of_band) {
+            Reflex::OnForeignSubmitBegin(submit_reflex_id);
+        } else {
+            Reflex::OnRenderSubmitBegin(submit_reflex_id);
+        }
+    }
+
     ImGui::Core::TextureManager::Submit();
-    auto submit_result = execution_queue.submit(submit_info, info.fence);
+    auto submit_result = queue.submit(submit_info, info.fence);
     if (submit_result == vk::Result::eErrorDeviceLost) {
         instance.ReportDeviceLost("submit");
+    }
+
+    if (trace_reflex && submit_reflex_id) {
+        if (is_out_of_band) {
+            Reflex::OnForeignSubmitEnd(submit_reflex_id);
+        } else {
+            Reflex::OnRenderSubmitEnd(submit_reflex_id);
+        }
     }
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 
