@@ -554,8 +554,7 @@ VOICE_LANGUAGES = [('auto', ('As in the game',)), ('eng', ('English',)),
                    ('frf', ('Français',)), ('iti', ('Italiano',)), ('jaj', ('日本語',))]
 DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', ('On', 'Включён')),
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
-READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
-             ('2', ('Precise',))]
+READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('2', ('Precise',))]
 # What the launcher does when the game starts (close_on_play of earlier launchers: 'close').
 ON_PLAY = [('stay', ('Keep it open',)), ('minimize', ('Minimize it',)), ('close', ('Close it',))]
 # BB_LOW_VRAM (run.py's low-VRAM profile): '' leaves it to the card's memory.
@@ -945,6 +944,9 @@ def game_environment(s, graphics=None):
     for key, name in (('draw_pipe', 'BB_DRAW_PIPE'), ('readbacks', 'BB_READBACKS'), ('frames_ahead', 'BB_FRAMES_AHEAD'),
                       ('low_vram', 'BB_LOW_VRAM')):
         if s[key]:
+            # Off (0) skipped FaceGen copies and exploded the hunter's face.
+            if name == 'BB_READBACKS' and s[key] == '0':
+                continue
             env[name] = s[key]
     for key, name in (('frame_stats', 'BB_FRAME_STATS'), ('gpu_profile', 'BB_GPU_PROFILE'),
                       ('vk_validation', 'BB_VK_VALIDATION')):
@@ -3737,8 +3739,8 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
-                 _('How exactly data the GPU writes is copied back for the game.',
-                   'Насколько точно данные, записанные GPU, возвращаются игре.'))
+                 _('Relaxed copies FaceGen vertices back. Off exploded the hunter face and is ignored.',
+                   'Relaxed копирует вершины FaceGen обратно. Off взрывал лицо охотника и игнорируется.'))
         self.row(f, _('Low-VRAM profile', 'Профиль для малого объёма видеопамяти'),
                  self.choice(f, 'low_vram', 'app', LOW_VRAM),
                  _('A larger texture budget and, at 1080p with an upscaler, a smaller scene from the start '
