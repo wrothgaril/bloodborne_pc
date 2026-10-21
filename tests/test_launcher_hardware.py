@@ -126,9 +126,9 @@ class ProfileTests(unittest.TestCase):
 
     def test_frame_generation_off_only_where_it_cannot_work(self):
         weak = rate('nvidia-gtx-1650', 'Intel(R) Core(TM) i5-9400F CPU @ 2.90GHz', 16)
-        self.assertEqual(profile(weak, (1920, 1080), {'frame_gen': 'fsr3'})['frame_gen'], 'off')
+        self.assertEqual(profile(weak, (1920, 1080), {'frame_generation': '2x'})['frame_generation'], 'off')
         strong = rate('nvidia-rtx-4070', 'AMD Ryzen 7 5800X', 32)
-        self.assertNotIn('frame_gen', profile(strong, current={'frame_gen': 'dlss'}))
+        self.assertNotIn('frame_generation', profile(strong, current={'frame_generation': '4x'}))
 
     def test_a_processor_below_the_minimum_sets_the_frame_rate_not_the_picture(self):
         """A player's GTX 1080 laptop with an i7-7820HK: 21-28 FPS in every test run, from the recommended

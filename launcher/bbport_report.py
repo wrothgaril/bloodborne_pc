@@ -15,7 +15,8 @@ STATUS = {'ok': ('Completed', GOLD), 'crash': ('Crashed', BLOOD), 'freeze': ('Fr
           'input': ('Stopped: input from the player', BLOOD)}
 SETTING_NAMES = {'output_res': 'Output', 'upscaler': 'Upscaler', 'preset': 'Preset', 'object_motion': 'Object motion',
                  'effect_ssao': 'SSAO', 'effect_dynamic_shadows': 'Dynamic shadows', 'model_lod': 'Model detail',
-                 'effect_game_aa': 'Game AA', 'effect_ssr': 'Reflections', 'frame_gen': 'Frame generation'}
+                 'effect_game_aa': 'Game AA', 'effect_ssr': 'Reflections', 'frame_generation': 'Frame generation',
+                 'fg_backend': 'Frame generation backend', 'reflex': 'Reflex'}
 PRESETS = {'0': 'Native AA', '1': 'Quality', '2': 'Balanced', '3': 'Performance', '4': 'Ultra Performance'}
 
 

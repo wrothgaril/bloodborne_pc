@@ -4,30 +4,26 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-#include <string>
-#ifdef _WIN32
 #include <filesystem>
-#include <windows.h>
-#define setenv(key, value, overwrite) _putenv_s(key, value)
-#define unsetenv(key) _putenv_s(key, "")
-#else
-#include <unistd.h>
-#endif
+#include <chrono>
+#include <string>
 #include "bbport_settings.h"
+
+#ifdef _WIN32
+static int setenv(const char* key, const char* value, int) { return _putenv_s(key, value); }
+static int unsetenv(const char* key) { return _putenv_s(key, ""); }
+#endif
 
 int main() {
     using namespace BbSettings;
-#ifdef _WIN32
-    wchar_t temporary[MAX_PATH]{};
-    assert(GetTempFileNameW(std::filesystem::temp_directory_path().c_str(), L"bbu", 0, temporary));
-    const auto temporary_path = std::filesystem::path(temporary).string();
-    const char* path = temporary_path.c_str();
-#else
-    char path[] = "/tmp/bbport-upscaler-test-XXXXXX";
-    const int fd = mkstemp(path);
-    assert(fd >= 0);
-    close(fd);
-#endif
+    const auto file = std::filesystem::temp_directory_path() /
+        ("bbport-upscaler-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".ini");
+    const auto path_string = file.string();
+    const char* path = path_string.c_str();
+    FILE* created = std::fopen(path, "w");
+    assert(created);
+    std::fclose(created);
     setenv("BB_CONFIG", path, 1);
     unsetenv("BB_UPSCALER");
     unsetenv("BB_UPSCALE_PRESET");

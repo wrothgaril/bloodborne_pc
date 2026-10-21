@@ -103,7 +103,7 @@ class SelectionTests(unittest.TestCase):
         obj.fg401_status.grid(row=1,column=0)
         self.obj=obj
         self.box=obj.fg401_choice(self.parent)
-        self.var=obj.var('frame_gen','ini')
+        self.var=obj.var('fg_backend','ini')
 
     def test_available_only_after_probe(self):
         self.assertFalse(any('4.0.1' in text for text in self.box['values']))
@@ -136,7 +136,7 @@ class SelectionTests(unittest.TestCase):
             with patch.dict(os.environ, BB_CONFIG=str(folder/'bbport.ini')), \
                  patch.multiple(launcher, CONFIG_DIR=folder, CONFIG_FILE=folder/'settings.json'):
                 self.obj.collect()
-                self.assertEqual(launcher.load_ini()[0]['frame_gen'], 'fsr401')
+                self.assertEqual(launcher.load_ini()[0]['fg_backend'], 'fsr401')
                 self.assertEqual(self.var.get(), 'fsr401')
 
     def test_recheck_can_fail_and_recover_without_changing_selection(self):
@@ -167,7 +167,7 @@ class SelectionTests(unittest.TestCase):
     def test_existing_selection_preserved(self):
         for supported in [True,False]:
             self.obj.fg401_support={'supported':supported}
-            for value in ['off','fsr3','dlss']:
+            for value in ['fsr','dlss']:
                 self.var.set(value)
                 self.obj.refresh_fg401()
                 self.assertEqual(self.var.get(),value)

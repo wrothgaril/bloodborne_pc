@@ -109,19 +109,16 @@ int main() {
     text = Frame();
     assert(text.find("Apply and restart") == std::string::npos);
     // Saved ML-FG selection remains visible while the session runs its FSR 3.1 fallback.
-    BbSettings::SelectFrameGen(BbSettings::FrameGenFsr401);
-    BbSettings::FrameGenFailure(BbSettings::FrameGenFsr401, "ML-FG file missing: test.dll");
+    s.fg_backend = BbSettings::FgFsr401;
+    s.frame_generation = 2;
+    BbSettings::ConfigureFg401Support(false, "ML-FG file missing: test.dll");
+    s.frame_gen_problem = "AMD ML-FG unavailable; FSR 3.1 frame generation this session.";
     text = Frame();
-    assert(text.find("ML-FG file missing: test.dll") != std::string::npos);
-    assert(text.find("FSR 3.1 FG active") != std::string::npos);
-    assert(s.frame_gen == BbSettings::FrameGenFsr401);
-    s.frame_gen_hdr = true;
-    text = Frame();
-    assert(text.find("ML-FG paused: HDR output.") != std::string::npos);
-    assert(text.find("FSR 3.1 FG active") == std::string::npos);
+    assert(text.find("AMD ML-FG 4.0.1") != std::string::npos);
+    assert(text.find("FSR 3.1 frame generation this session") != std::string::npos);
     BbSettings::Save();
     BbSettings::Load();
-    assert(s.frame_gen == BbSettings::FrameGenFsr401 && !s.frame_gen_hdr);
+    assert(s.fg_backend == BbSettings::FgFsr401 && s.frame_generation == 2);
     BbOverlay::SetOpen(false);
     ImGui::DestroyContext();
     std::remove(path.c_str());

@@ -236,14 +236,14 @@ TWEAKS = [
 ]
 # Effects that are taste, not performance: on Picture & performance (the others on All graphics).
 TASTE_EFFECTS = ('effect_chromatic_aberration', 'effect_dof', 'effect_motion_blur')
-INI_FLAGS = {'sharpen', 'object_motion', 'object_motion_cache', 'show_fps', 'mute_unfocused', 'frame_gen_fit_display',
+INI_FLAGS = {'sharpen', 'object_motion', 'object_motion_cache', 'show_fps', 'mute_unfocused',
              *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
-INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
+INI_DEFAULTS = {'upscaler': 'fsr4', 'frame_generation': 'off', 'fg_backend': 'dlss', 'reflex': 'on',
+                'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'show_fps': '1', 'output_res': '1920x1080', 'model_lod': '0',
                 'fsr411_backend': 'vk', 'object_motion_cache': '0',
-                'live_resolution': 'auto', 'hud_position': '100', 'fov': '43', 'mute_unfocused': '0',
+                'live_resolution': 'auto', 'hud_position': '0', 'fov': '43', 'mute_unfocused': '0',
                 'button_prompts': 'auto',
-                'frame_gen': 'off', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '0',
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '', 'cache_dir': '',
                 'dlc_dir': '',
@@ -290,21 +290,25 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'test_repeats': '1', 'test_minutes': '10', 'test_saves': {}}  # the last check of eboot.bin (bbport_help), kept while the file is unchanged
 # bbbridge's own app reads and writes the online_* keys above: keep their names.
 
+# Frame generation backends (vk_frame_generation.cpp): DLSS up to 4x, FSR 3.1 and ML-FG 2x.
+FG_BACKENDS = [('dlss', ('NVIDIA DLSS Frame Generation (GeForce RTX 40/50)', 'NVIDIA DLSS (GeForce RTX 40/50)')),
+               ('fsr', ('AMD FSR 3.1 Frame Generation (any GPU)', 'AMD FSR 3.1 (любая видеокарта)')),
+               ('fsr401', ('AMD ML-FG 4.0.1 (RX 9000, 2× SDR, experimental)',))]
+FG_MODES_DLSS = [('off', ('Off', 'Выключено')),
+                 ('2x', ('2x (Double FPS)', '2x (Удвоение FPS)')),
+                 ('3x', ('3x (Triple FPS)', '3x (Утроение FPS)')),
+                 ('4x', ('4x (Quadruple FPS)', '4x (Четырёхкратный FPS)'))]
+FG_MODES_FSR = [('off', ('Off', 'Выключено')),
+                ('2x', ('2x (Double FPS)', '2x (Удвоение FPS)'))]
+REFLEX_MODES = [('off', ('Off', 'Выключено')),
+                ('on', ('On', 'Включено')),
+                ('boost', ('On + Boost', 'Включено + Boost'))]
 UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
              ('fsr4', ('FSR 4 (best quality)', 'FSR 4 (лучшее качество)')),
              ('fsr411', ('FSR 4.1.1 (experimental)', 'FSR 4.1.1 (экспериментально)')),
              ('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
              ('taa', ('TAA (native resolution anti-aliasing)', 'TAA (нативное сглаживание)')),
              ('off', ('Off', 'Выключен'))]
-# Frames generated between two of the game's (vk_frame_generation.cpp).
-FRAME_GENERATION = [('off', ('Off', 'Выключена')),
-                    ('fsr3', ('AMD FSR 3.1 Frame Generation (any GPU)', 'AMD FSR 3.1 (любая видеокарта)')),
-                    ('fsr401', ('AMD ML-FG 4.0.1 (RX 9000, 2× SDR, experimental)',)),
-                    ('dlss', ('NVIDIA DLSS Frame Generation (GeForce RTX 40/50)',
-                              'NVIDIA DLSS (GeForce RTX 40/50)'))]
-FRAME_GEN_MULTIPLIERS = [('2', ('2× (one generated frame)', '2× (один кадр)')),
-                         ('3', ('3× (DLSS on GeForce RTX 50)', '3× (DLSS на GeForce RTX 50)')),
-                         ('4', ('4× (DLSS on GeForce RTX 50)', '4× (DLSS на GeForce RTX 50)'))]
 PRESETS = [('0', ('Native AA (×1.0)',)), ('1', ('Quality (×1.5)',)), ('2', ('Balanced (×1.7)',)),
            ('3', ('Performance (×2)',)), ('4', ('Ultra Performance (×3)',))]
 FSR411_BACKENDS = [('vk', ('Vulkan (fsr4vk)',)), ('dx12', ('AMD DX12',))]
@@ -324,9 +328,10 @@ def native_fsr411_present():
 
 OUTPUTS = [('1280x720', ('1280 × 720 (Steam Deck)',)), ('1920x1080', ('1920 × 1080',)),
            ('2560x1440', ('2560 × 1440',)), ('3840x2160', ('3840 × 2160 (4K)',)),
-           ('2560x1080', ('2560 × 1080 (21:9)',)), ('3440x1440', ('3440 × 1440 (21:9)',)),
-           ('3840x1600', ('3840 × 1600 (21:9)',)), ('5120x2160', ('5120 × 2160 (21:9)',)),
-           ('3840x1080', ('3840 × 1080 (32:9)',)), ('5120x1440', ('5120 × 1440 (32:9)',))]
+           ('1280x800', ('1280 × 800 (16:10)',)), ('2560x1080', ('2560 × 1080 (21:9)',)),
+           ('3440x1440', ('3440 × 1440 (21:9)',)), ('3840x1600', ('3840 × 1600 (21:9)',)),
+           ('5120x2160', ('5120 × 2160 (21:9)',)), ('3840x1080', ('3840 × 1080 (32:9)',)),
+           ('5120x1440', ('5120 × 1440 (32:9)',)), ('1080x1920', ('1080 × 1920 (Portrait)',))]
 # No field of view here: bbport.ini fov (scripts/fov.py) scales the camera table LockCamParam, but
 # measured in the game 90 degrees gives about 48 (2026-10-20). Back once it works.
 # The game's button icons (gpu/shim/bbport_prompts.cpp): with the device in use, or always one kind.
@@ -712,6 +717,13 @@ def cache_folder(s):
 def game_environment(s, graphics=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith(('BB_FG_', 'BB_FG401_'))}
     graphics = graphics if graphics is not None else load_ini(s)[0]
+    for ini_k, env_k in (('frame_generation', 'BB_FRAME_GENERATION'),
+                         ('fg_backend', 'BB_FG_BACKEND'),
+                         ('reflex', 'BB_REFLEX'),
+                         ('upscaler', 'BB_UPSCALER'),
+                         ('output_res', 'BB_OUTPUT_RES')):
+        if ini_k in graphics and not env.get(env_k):
+            env[env_k] = str(graphics[ini_k])
     env['BB_GAME_DIR'] = s['game_dir']
     if s['user_dir']:
         env['BB_USER_DIR'] = s['user_dir']
@@ -968,12 +980,13 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         return box
 
     def fg401_choice(self, parent, width=52):
-        var = self.var('frame_gen', 'ini')
+        """The frame generation backend; ML-FG only where the capability helper found it can run."""
+        var = self.var('fg_backend', 'ini')
         box = self.ttk.Combobox(parent, state='readonly', width=width)
         values = []
         def refresh(*_args):
             ready = bool(self.fg401_support and self.fg401_support.get('supported'))
-            options = [(v,t) for v,t in FRAME_GENERATION if v!='fsr401' or ready]
+            options = [(v,t) for v,t in FG_BACKENDS if v!='fsr401' or ready]
             values[:] = [v for v,t in options]
             box.configure(values=[_(*t) for v,t in options])
             if var.get()=='fsr401' and not ready:
@@ -981,13 +994,33 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                 box.set(_('ML-FG 4.0.1: checking support…') if self.fg401_support is None else
                         _(bbport_fg401.KEYS[0]))
             else:
-                box.current(values.index(var.get()) if var.get() in values else values.index('off'))
+                box.current(values.index(var.get()) if var.get() in values else 0)
             self.refresh_fg401_status()
         box.bind('<<ComboboxSelected>>', lambda _e: var.set(values[box.current()]))
         var.trace_add('write', refresh)
         self.fg401_refreshers.append(refresh)
         refresh()
-        box.setting_key = 'frame_gen'  # for the search (row() indexes it)
+        box.setting_key = 'fg_backend'  # for the search (row() indexes it)
+        return box
+
+    def fg_mode_choice(self, parent, width=38):
+        """Off/2x/3x/4x as far as the backend goes: DLSS up to 4x, FSR 3.1 and ML-FG 2x."""
+        var, backend = self.var('frame_generation', 'ini'), self.var('fg_backend', 'ini')
+        box = self.ttk.Combobox(parent, state='readonly', width=width)
+        values = []
+        def refresh(*_args):
+            modes = FG_MODES_DLSS if backend.get() == 'dlss' else FG_MODES_FSR
+            values[:] = [v for v, _t in modes]
+            box.configure(values=[_(*t) for _v, t in modes])
+            if var.get() not in values:
+                var.set('2x' if var.get() in ('3x', '4x') else values[0])  # writes: refresh again
+                return
+            box.current(values.index(var.get()))
+        box.bind('<<ComboboxSelected>>', lambda _e: var.set(values[box.current()]))
+        var.trace_add('write', refresh)
+        backend.trace_add('write', refresh)
+        refresh()
+        box.setting_key = 'frame_generation'  # for the search (row() indexes it)
         return box
 
     def refresh_fg401(self):
@@ -997,7 +1030,7 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
 
     def refresh_fg401_status(self):
         if hasattr(self, 'fg401_status'):
-            selected = self.var('frame_gen', 'ini').get() == 'fsr401'
+            selected = self.var('fg_backend', 'ini').get() == 'fsr401'
             # only with ML-FG chosen: on other PCs it is not offered, and its reasons would be noise
             text = bbport_fg401.message(self.fg401_support, _, hdr=bool(self.var('hdr', 'app').get()),
                                         selected=selected) if selected else ''
@@ -2044,17 +2077,14 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
                  _('1 keeps frame pacing even; more can raise FPS when the graphics card is the limit.',
                    '1 — ровная подача кадров; больше может поднять FPS, если упирается в видеокарту.'))
         self.row(f, _('Presentation', 'Режим показа кадров'), self.choice(f, 'present_mode', 'app', PRESENT_MODES))
-        self.section(f, _('Frame generation', 'Генерация кадров'))
-        self.row(f, _('Frame generation', 'Генерация кадров'),
-                 self.fg401_choice(f),
-                 _('Frames made between two of the game\'s: 60 FPS on screen becomes 120. Needs a display with '
-                   'that refresh rate (120 Hz or more at 60 FPS); it pauses when the display cannot show the extra '
-                   'frames. Adds a little input latency. Menus and movies are not generated. DLSS needs a GeForce '
-                   'RTX 40 or newer, otherwise FSR 3.1 is used.',
-                   'Кадры между двумя кадрами игры: 60 FPS на экране становятся 120. Нужен монитор с такой '
-                   'частотой (120 Гц и выше при 60 FPS); иначе генерация приостанавливается. Немного добавляет '
-                   'задержку ввода. Меню и ролики не генерируются. DLSS нужна GeForce RTX 40 или новее, иначе '
-                   'используется FSR 3.1.'))
+        self.section(f, _('Frame generation & Reflex', 'Генерация кадров и Reflex'))
+        self.row(f, _('Generation backend', 'Бэкенд генерации'), self.fg401_choice(f),
+                 _('Frames made between two of the game\'s: 60 FPS on screen becomes 120 (DLSS on a GeForce RTX 50 '
+                   'up to 240). Needs a display with that refresh rate. Separate from the upscaler. DLSS needs a '
+                   'GeForce RTX 40 or newer; AMD ML-FG a Radeon RX 9000 on Windows 11. Applies on restart.',
+                   'Кадры между двумя кадрами игры: 60 FPS на экране становятся 120 (DLSS на GeForce RTX 50 — до 240). '
+                   'Нужен монитор с такой частотой. Не зависит от апскейлера. DLSS нужна GeForce RTX 40 или новее; '
+                   'AMD ML-FG — Radeon RX 9000 и Windows 11. Применится после перезапуска.'))
         self.fg401_status = self.ttk.Label(f, wraplength=self.px(640), justify='left', style='Muted.TLabel')
         self.fg401_status.grid(row=self.next_row(f), column=1, sticky='w', pady=(4, 0))
         self.fg401_recheck = ttk.Frame(f)
@@ -2062,16 +2092,15 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         ttk.Button(self.fg401_recheck, text=_('Recheck support'), command=self.recheck_fg401).pack(side='left')
         self.refresh_fg401()
         self.var('hdr', 'app').trace_add('write', lambda *_a: self.refresh_fg401_status())
-        self.var('frame_gen', 'ini').trace_add('write', lambda *_a: self.refresh_fg401_status())
-        self.row(f, _('Multiplier', 'Множитель'),
-                 self.choice(f, 'frame_gen_multiplier', 'ini', FRAME_GEN_MULTIPLIERS),
-                 _('FSR 3.1 makes one frame (2×); DLSS on a GeForce RTX 50 up to three (4×).',
-                   'FSR 3.1 делает один кадр (2×); DLSS на GeForce RTX 50 — до трёх (4×).'))
-        self.check(f, 'frame_gen_fit_display', 'ini', _('Fit to display refresh', 'Под частоту монитора'),
-                   _('On: no more frames than the display shows (an uncapped game gets fewer generated frames, and '
-                     'the GPU does less). Off: the multiplier as chosen.',
-                     'Вкл.: не больше кадров, чем показывает монитор (при снятом ограничении FPS генерируется меньше, '
-                     'видеокарта меньше нагружена). Выкл.: множитель как выбран.'))
+        self.var('fg_backend', 'ini').trace_add('write', lambda *_a: self.refresh_fg401_status())
+        self.row(f, _('Frame generation', 'Генерация кадров'), self.fg_mode_choice(f),
+                 _('DLSS supports Off/2x/3x/4x; FSR 3.1 and AMD ML-FG Off/2x. Menus and movies are not generated. '
+                   'Applies on restart.',
+                   'DLSS поддерживает Off/2x/3x/4x; FSR 3.1 и AMD ML-FG — только Off/2x. Меню и ролики не '
+                   'генерируются. Применится после перезапуска.'))
+        self.row(f, _('NVIDIA Reflex', 'NVIDIA Reflex'), self.choice(f, 'reflex', 'ini', REFLEX_MODES),
+                 _('Reduces latency with frame generation. Guarded by runtime capability; applies on restart.',
+                   'Снижает задержку при генерации кадров. Применяется после перезапуска.'))
         self.section(f, _('FSR 4 assets', 'Ассеты FSR 4'))
         self.fsr4_label = ttk.Label(f, text='', wraplength=self.px(640), justify='left', style='Muted.TLabel')
         self.fsr4_label.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w')
@@ -3554,11 +3583,13 @@ class Launcher(bbport_setup.SetupMixin, bbport_help.HelpMixin, bbport_search.Sea
         upscaler = dict(UPSCALERS).get(self.var('upscaler', 'ini').get(), ('?',))[0].split(' (')[0]
         if self.var('upscaler', 'ini').get() == 'fsr411':
             upscaler += ' · ' + ('DX12' if self.var('fsr411_backend', 'ini').get() == 'dx12' else 'fsr4vk')
+        fg_val = self.var('frame_generation', 'ini').get()
+        fg_str = f' · FG {fg_val.upper()}' if fg_val and fg_val != 'off' else ''
         output = self.var('output_res', 'ini').get().replace('x', ' × ')
         online = _('Online') if self.var('online', 'app').get() else _('Offline')
         if self.var('online', 'app').get() and self.var('online_pool', 'app').get() == 'huntersdream':
             online = _("Online (The Hunter's Dream)")
-        return f'{_(*fps)}   ·   {upscaler}   ·   {output}   ·   {online}'
+        return f'{_(*fps)}   ·   {upscaler}{fg_str}   ·   {output}   ·   {online}'
 
     def detect_gpu(self):
         exe = PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe'

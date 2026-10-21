@@ -8,6 +8,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
+# Keep builder checkout paths out of __FILE__ and debug metadata.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    get_filename_component(BB_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+    add_compile_options("-ffile-prefix-map=${BB_SOURCE_ROOT}=.")
+endif()
 # Frame pointers keep the loader's thread dumps (watchdog, SIGUSR2 sampling) walkable.
 add_compile_options(-fno-omit-frame-pointer)
 if (MINGW)
@@ -91,6 +96,7 @@ add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 # bbport: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
 set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
+set(FFX_VK_PORTABLE_BUILD_FSR3_3_1_5_SCAFFOLD ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
@@ -123,6 +129,8 @@ add_host_shader(upscale_merge.comp upscale_merge_comp)
 add_host_shader(upscale_reactive.comp upscale_reactive_comp)
 add_host_shader(fsr4vk_prepare.comp fsr4vk_prepare_comp)
 add_host_shader(test_fsr411_consume.comp test_fsr411_consume_comp)
+add_host_shader(fg_depth.comp fg_depth_comp)
+add_host_shader(fg_hud.comp fg_hud_comp)
 add_host_shader(taa.comp taa_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_ldr_comp LDR_OUTPUT=1)
@@ -132,8 +140,7 @@ add_host_shader(depth_resample.frag depth_resample_frag)
 add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
 add_host_shader(depth_resample.frag depth_stencil_bits_frag STENCIL_BITS=1)
 add_host_shader(camera_motion.comp camera_motion_debug_comp DEBUG_OVERLAY=1)
-# Frame generation (vk_frame_generation.cpp): its depth input and the UI over generated frames.
-add_host_shader(frame_gen_inputs.comp frame_gen_inputs_comp)
+# AMD ML-FG 4.0.1 (fg401_dx12): its copy and UI pass, and the UI shader its test compares with.
 add_host_shader(frame_gen_ui.comp frame_gen_ui_comp)
 add_host_shader(frame_gen_fused_ui.comp frame_gen_fused_ui_comp)
 foreach(BPP IN ITEMS 8 16 32 64 96 128)
@@ -241,8 +248,8 @@ target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-f
 if (NOT WIN32)
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
 endif()
-target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan
-    ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
+target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+target_link_libraries(bbgpu PRIVATE ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 if (WIN32)
@@ -272,6 +279,8 @@ if (WIN32)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
     add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c
         ../packaging/windows/bb-probe.rc)
+    target_sources(bb-probe PRIVATE ../src/aspect_ratio.cpp)
+    target_compile_definitions(bb-probe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
     # Clang 23 added -Wunused-but-set-global (on with -Wall): the runtime keeps a few
@@ -420,3 +429,46 @@ set_source_files_properties(../tests/test_fsr411_sharpen.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(fsr411-sharpen-test PRIVATE Vulkan::Vulkan)
 add_dependencies(fsr411-sharpen-test host_shaders)
+
+add_executable(output-settings-test EXCLUDE_FROM_ALL ../tests/test_output_settings.cpp
+    shim/bbport_settings.cpp)
+target_include_directories(output-settings-test PRIVATE shim)
+target_compile_options(output-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_executable(fg-timing-test EXCLUDE_FROM_ALL ../tests/test_fg_timing.cpp)
+target_include_directories(fg-timing-test PRIVATE .. shadps4)
+target_compile_options(fg-timing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_executable(fg-settings-test EXCLUDE_FROM_ALL ../tests/test_fg_settings.cpp shim/bbport_settings.cpp)
+target_include_directories(fg-settings-test PRIVATE shim)
+target_compile_options(fg-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_executable(reflex-cpu-test EXCLUDE_FROM_ALL ../tests/test_reflex_cpu.cpp
+    shadps4/video_core/renderer_vulkan/vk_reflex.cpp shim/bbport_settings.cpp)
+target_include_directories(reflex-cpu-test PRIVATE .. shim shadps4 third_party/gcn/include)
+target_compile_options(reflex-cpu-test PRIVATE -UNDEBUG)
+target_link_libraries(reflex-cpu-test PRIVATE Vulkan::Headers fmt::fmt)
+
+if (WIN32)
+    add_executable(aspect-thunk-test EXCLUDE_FROM_ALL ../tests/test_aspect_thunk.cpp)
+    target_compile_options(aspect-thunk-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(aspect-thunk-test PRIVATE ..)
+endif()
+
+# A foreign bridge can end immediately after its ABI word. Exercise rejection and
+# cleanup against a guarded table without initializing Vulkan/NGX. Its DLLs live
+# in an isolated test directory, never beside the packaged renderer.
+if (WIN32)
+    enable_testing()
+    set(BB_DLSS_REJECT_DIR "${CMAKE_CURRENT_BINARY_DIR}/dlss-bridge-reject")
+    add_library(dlss-unknown-bridge-test SHARED EXCLUDE_FROM_ALL ../tests/test_dlss_unknown_bridge.cpp)
+    set_target_properties(dlss-unknown-bridge-test PROPERTIES
+        PREFIX "" OUTPUT_NAME bbport_dlss RUNTIME_OUTPUT_DIRECTORY "${BB_DLSS_REJECT_DIR}")
+    add_executable(dlss-bridge-reject-test EXCLUDE_FROM_ALL ../tests/test_dlss_bridge_reject.cpp
+        shadps4/video_core/renderer_vulkan/vk_dlss.cpp)
+    target_include_directories(dlss-bridge-reject-test PRIVATE shim shadps4)
+    target_compile_options(dlss-bridge-reject-test PRIVATE -UNDEBUG)
+    target_link_libraries(dlss-bridge-reject-test PRIVATE Vulkan::Headers fmt::fmt)
+    set_target_properties(dlss-bridge-reject-test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${BB_DLSS_REJECT_DIR}")
+    add_dependencies(dlss-bridge-reject-test dlss-unknown-bridge-test)
+    file(GENERATE OUTPUT "${BB_DLSS_REJECT_DIR}/nvngx_dlss.dll" CONTENT "test presence sentinel")
+    add_test(NAME dlss-bridge-reject-test COMMAND dlss-bridge-reject-test)
+endif()
