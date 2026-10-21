@@ -131,6 +131,9 @@ add_host_shader(fsr4vk_prepare.comp fsr4vk_prepare_comp)
 add_host_shader(test_fsr411_consume.comp test_fsr411_consume_comp)
 add_host_shader(fg_depth.comp fg_depth_comp)
 add_host_shader(fg_hud.comp fg_hud_comp)
+add_host_shader(neural_prepare.comp neural_prepare_comp)
+add_host_shader(neural_resolve.comp neural_resolve_comp)
+add_host_shader(neural_ui.comp neural_ui_comp)
 add_host_shader(taa.comp taa_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_comp)
 add_host_shader(taa_sharpen.comp taa_sharpen_ldr_comp LDR_OUTPUT=1)
@@ -391,7 +394,7 @@ target_compile_options(prompt-icons-test PRIVATE -UNDEBUG)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
-    shim/bbport_settings.cpp)
+    shim/bbport_settings.cpp shim/bbport_neural_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
@@ -431,17 +434,17 @@ target_link_libraries(fsr411-sharpen-test PRIVATE Vulkan::Vulkan)
 add_dependencies(fsr411-sharpen-test host_shaders)
 
 add_executable(output-settings-test EXCLUDE_FROM_ALL ../tests/test_output_settings.cpp
-    shim/bbport_settings.cpp)
+    shim/bbport_settings.cpp shim/bbport_neural_settings.cpp)
 target_include_directories(output-settings-test PRIVATE shim)
 target_compile_options(output-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(fg-timing-test EXCLUDE_FROM_ALL ../tests/test_fg_timing.cpp)
 target_include_directories(fg-timing-test PRIVATE .. shadps4)
 target_compile_options(fg-timing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
-add_executable(fg-settings-test EXCLUDE_FROM_ALL ../tests/test_fg_settings.cpp shim/bbport_settings.cpp)
+add_executable(fg-settings-test EXCLUDE_FROM_ALL ../tests/test_fg_settings.cpp shim/bbport_settings.cpp shim/bbport_neural_settings.cpp)
 target_include_directories(fg-settings-test PRIVATE shim)
 target_compile_options(fg-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(reflex-cpu-test EXCLUDE_FROM_ALL ../tests/test_reflex_cpu.cpp
-    shadps4/video_core/renderer_vulkan/vk_reflex.cpp shim/bbport_settings.cpp)
+    shadps4/video_core/renderer_vulkan/vk_reflex.cpp shim/bbport_settings.cpp shim/bbport_neural_settings.cpp)
 target_include_directories(reflex-cpu-test PRIVATE .. shim shadps4 third_party/gcn/include)
 target_compile_options(reflex-cpu-test PRIVATE -UNDEBUG)
 target_link_libraries(reflex-cpu-test PRIVATE Vulkan::Headers fmt::fmt)
@@ -472,3 +475,9 @@ if (WIN32)
     file(GENERATE OUTPUT "${BB_DLSS_REJECT_DIR}/nvngx_dlss.dll" CONTENT "test presence sentinel")
     add_test(NAME dlss-bridge-reject-test COMMAND dlss-bridge-reject-test)
 endif()
+
+# Optional neural-rendering controls, without GPU/runtime initialization.
+add_executable(neural-settings-test EXCLUDE_FROM_ALL ../tests/test_neural_settings.cpp
+    shim/bbport_neural_settings.cpp)
+target_include_directories(neural-settings-test PRIVATE shim)
+target_compile_options(neural-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
