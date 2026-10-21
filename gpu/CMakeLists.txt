@@ -423,7 +423,7 @@ target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
 add_executable(shared-graphics-test EXCLUDE_FROM_ALL ../tests/test_shared_graphics.cpp
-    shim/bbport_settings.cpp)
+    shim/bbport_settings.cpp shim/bbport_neural_settings.cpp)
 target_include_directories(shared-graphics-test PRIVATE shim)
 target_compile_options(shared-graphics-test PRIVATE -UNDEBUG)
 

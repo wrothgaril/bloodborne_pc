@@ -1,17 +1,19 @@
 """Neural-rendering settings of the launcher: ini keys, option lists and the game's key names."""
-import importlib.util
 import inspect
 import os
 from pathlib import Path
+import sys
 import re
 import tempfile
 import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('launcher_win', ROOT / 'launcher/bbport_launcher_win.py')
-launcher = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(launcher)
+sys.path.insert(0, str(ROOT / 'launcher'))
+sys.path.insert(0, str(ROOT / 'scripts'))
+# The module itself: a second copy rebinds the launcher's page modules (bbport_setup, bbport_help,
+# bbport_search) to it, and later tests then translate through the copy's language.
+import bbport_launcher_win as launcher  # noqa: E402
 
 SETTINGS_SOURCE = (ROOT / 'gpu/shim/bbport_neural_settings.cpp').read_text(encoding='utf-8')
 

@@ -41,6 +41,7 @@ endforeach()
 add_executable(fg401-support-test EXCLUDE_FROM_ALL ../tests/test_fg401_support.cpp)
 target_include_directories(fg401-support-test PRIVATE "${FG401_DIR}")
 target_compile_options(fg401-support-test PRIVATE -UNDEBUG)
-add_executable(fg401-preferences-test EXCLUDE_FROM_ALL ../tests/test_fg401_preferences.cpp shim/bbport_settings.cpp)
+add_executable(fg401-preferences-test EXCLUDE_FROM_ALL ../tests/test_fg401_preferences.cpp shim/bbport_settings.cpp
+    shim/bbport_neural_settings.cpp)
 target_include_directories(fg401-preferences-test PRIVATE shim)
 target_compile_options(fg401-preferences-test PRIVATE -UNDEBUG)

@@ -1,14 +1,16 @@
 """Unit tests for Frame Generation and Reflex settings in bbport launcher and environment."""
-import importlib.util
 import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('launcher_win', ROOT / 'launcher/bbport_launcher_win.py')
-launcher = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(launcher)
+sys.path.insert(0, str(ROOT / 'launcher'))
+sys.path.insert(0, str(ROOT / 'scripts'))
+# The module itself: a second copy rebinds the launcher's page modules (bbport_setup, bbport_help,
+# bbport_search) to it, and later tests then translate through the copy's language.
+import bbport_launcher_win as launcher  # noqa: E402
 
 
 class Variable:
